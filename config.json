@@ -1,0 +1,8 @@
+{
+  "PwndocUrl": "https://192.168.1.51:8443",
+  "OutputDir": "/home/username/crumbus/outputs",
+  "ScoutSuiteReport": "/test/dir",
+  "AwsAccessKey": "",
+  "AwsSecretKey": "",
+  "AwsToken": ""
+}
