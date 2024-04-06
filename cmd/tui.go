@@ -1,5 +1,5 @@
 /*
-Copyright © 2024 NAME HERE <EMAIL ADDRESS>
+Made with *<3* by cola
 */
 package cmd
 
@@ -8,10 +8,13 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/cursor"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fogleman/ease"
@@ -28,12 +31,24 @@ const (
 
 // General stuff for styling the view
 var (
+	//checkbox styling
 	keywordStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("211"))
 	subtleStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	checkboxStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("212"))
 	progressEmpty = subtleStyle.Render(progressEmptyChar)
 	dotStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("236")).Render(dotChar)
 	mainStyle     = lipgloss.NewStyle().MarginLeft(2)
+
+	//textinputs bubble styling
+	focusedStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+	blurredStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	cursorStyle         = focusedStyle.Copy()
+	noStyle             = lipgloss.NewStyle()
+	helpStyle           = blurredStyle.Copy()
+	cursorModeHelpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+
+	focusedButton = focusedStyle.Copy().Render("[ Submit ]")
+	blurredButton = fmt.Sprintf("[ %s ]", blurredStyle.Render("Submit"))
 
 	// Gradient colors we'll use for the progress bar
 	ramp = makeRampStyles("#B14FFF", "#00FFA3", progressBarWidth)
@@ -74,6 +89,11 @@ type model struct {
 		AwsSecretKey     string
 		AwsToken         string
 	}
+	// textinput
+	focusIndex int
+	inputs     []textinput.Model
+	cursorMode cursor.Mode
+	Configured bool
 }
 
 type configWrittenMsg struct{}
@@ -85,6 +105,21 @@ type errMsg struct {
 func initialModel() model {
 
 	configExist := false
+	var configVars = struct {
+		PwndocUrl        string
+		OutputDir        string
+		ScoutSuiteReport string
+		AwsAccessKey     string
+		AwsSecretKey     string
+		AwsToken         string
+	}{
+		PwndocUrl:        "https://192.168.1.51:8443",
+		OutputDir:        "/home/username/crumbus/outputs",
+		ScoutSuiteReport: "/home/username/crumbus/scout/scoutsuite-report.html",
+		AwsAccessKey:     "",
+		AwsSecretKey:     "",
+		AwsToken:         "",
+	}
 
 	//if config file exists, set configExist to true
 	//set to false for testing
@@ -95,33 +130,16 @@ func initialModel() model {
 		if err != nil {
 			fmt.Println("Error reading config file:", err)
 		}
-		var configVars struct {
-			PwndocUrl        string
-			OutputDir        string
-			ScoutSuiteReport string
-			AwsAccessKey     string
-			AwsSecretKey     string
-			AwsToken         string
-		}
+
 		//assign from json
 		err = json.Unmarshal(configData, &configVars)
 		if err != nil {
 			fmt.Println("Error unmarshalling config file:", err)
 		}
-		//assign to model
-		return model{
-			Choice:      0,
-			Chosen:      false,
-			Frames:      0,
-			Progress:    0,
-			Loaded:      false,
-			Quitting:    false,
-			ConfigExist: configExist,
-			Config:      0,
-			ConfigVars:  configVars,
-		}
+
 	}
-	return model{
+
+	m := model{
 		Choice:      0,
 		Chosen:      false,
 		Frames:      0,
@@ -130,26 +148,44 @@ func initialModel() model {
 		Quitting:    false,
 		ConfigExist: configExist,
 		Config:      0,
-		ConfigVars: struct {
-			PwndocUrl        string
-			OutputDir        string
-			ScoutSuiteReport string
-			AwsAccessKey     string
-			AwsSecretKey     string
-			AwsToken         string
-		}{
-			PwndocUrl:        "https://192.168.1.51:8443",
-			OutputDir:        "/home/username/crumbus/outputs",
-			ScoutSuiteReport: "/home/username/crumbus/scout/scoutsuite-report.html",
-			AwsAccessKey:     "",
-			AwsSecretKey:     "",
-			AwsToken:         "",
-		},
+		ConfigVars:  configVars,
+		inputs:      make([]textinput.Model, reflect.TypeOf(configVars).NumField()),
+		Configured:  false,
 	}
+	//textinput bits
+	var t textinput.Model
+	for i := range m.inputs {
+		t = textinput.New()
+		t.Cursor.Style = cursorStyle
+		t.CharLimit = 32
+
+		switch i {
+		case 0:
+			t.Placeholder = "PwnDocURL: " + m.ConfigVars.PwndocUrl
+			t.Focus()
+			t.PromptStyle = focusedStyle
+			t.TextStyle = focusedStyle
+		case 1:
+			t.Placeholder = "OutPutDir: " + m.ConfigVars.OutputDir
+		case 2:
+			t.Placeholder = "ScoutSuiteReport: " + m.ConfigVars.ScoutSuiteReport
+		case 3:
+			t.Placeholder = "AWSAccessKey: " + m.ConfigVars.AwsAccessKey
+		case 4:
+			t.Placeholder = "AWSSecretKey: " + m.ConfigVars.AwsSecretKey
+		case 5:
+			t.Placeholder = "AWSToken: " + m.ConfigVars.AwsToken
+
+		}
+
+		m.inputs[i] = t
+	}
+	return m
 }
 
 func startTui() {
 
+	// may be better to make multiple models instead of one big one, though the config vars are useful everywhere
 	p := tea.NewProgram(initialModel())
 	if _, err := p.Run(); err != nil {
 		fmt.Println("could not start program:", err)
@@ -157,23 +193,102 @@ func startTui() {
 }
 
 func (m model) Init() tea.Cmd {
+	if !m.Configured {
+		return textinput.Blink
+	}
+
 	return tick()
 }
 
 // Main update function.
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	// Make sure these keys always quit
+	// Make sure these keys always quit IF the user isn't in configView
 	if msg, ok := msg.(tea.KeyMsg); ok {
 		k := msg.String()
-		if k == "q" || k == "esc" || k == "ctrl+c" {
+		if k == "esc" || k == "ctrl+c" {
 			m.Quitting = true
 			return m, tea.Quit
 		}
+		if k == "q" {
+			if m.Configured {
+				m.Quitting = true
+				return m, tea.Quit
+			}
+		}
 	}
+	if !m.Configured {
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			switch msg.String() {
+			case "ctrl+c", "esc":
+				return m, tea.Quit
 
+			// Change cursor mode
+			case "ctrl+r":
+				m.cursorMode++
+				if m.cursorMode > cursor.CursorHide {
+					m.cursorMode = cursor.CursorBlink
+				}
+				cmds := make([]tea.Cmd, len(m.inputs))
+				for i := range m.inputs {
+					cmds[i] = m.inputs[i].Cursor.SetMode(m.cursorMode)
+				}
+				return m, tea.Batch(cmds...)
+
+			// Set focus to next input
+			case "tab", "shift+tab", "enter", "up", "down":
+				s := msg.String()
+
+				// Did the user press enter while the submit button was focused?
+				// If so,
+				if s == "enter" && m.focusIndex == len(m.inputs) {
+					m.Configured = true
+					return m, m.updateInputs(msg)
+				}
+
+				// Cycle indexes
+				if s == "up" || s == "shift+tab" {
+					m.focusIndex--
+				} else {
+					m.focusIndex++
+				}
+
+				if m.focusIndex > len(m.inputs) {
+					m.focusIndex = 0
+				} else if m.focusIndex < 0 {
+					m.focusIndex = len(m.inputs)
+				}
+
+				cmds := make([]tea.Cmd, len(m.inputs))
+				for i := 0; i <= len(m.inputs)-1; i++ {
+					if i == m.focusIndex {
+						// Set focused state
+						cmds[i] = m.inputs[i].Focus()
+						m.inputs[i].PromptStyle = focusedStyle
+						m.inputs[i].TextStyle = focusedStyle
+						continue
+					}
+					// Remove focused state
+					m.inputs[i].Blur()
+					m.inputs[i].PromptStyle = noStyle
+					m.inputs[i].TextStyle = noStyle
+				}
+
+				return m, tea.Batch(cmds...)
+			}
+		}
+
+		// Handle character input and blinking
+		if !m.Configured {
+			cmd := m.updateInputs(msg)
+
+			return m, cmd
+		}
+	}
 	// Hand off the message and model to the appropriate update function for the
 	// appropriate view based on the current state.
 
+	// perhaps add a "would you like to configure the tool or verify the configuration?" view
 	if !m.ConfigExist {
 		return updateConfig(msg, m)
 	}
@@ -190,7 +305,9 @@ func (m model) View() string {
 		return "\n  See you later!\n\n"
 	}
 	// add config file view
-	if !m.ConfigExist {
+	if !m.Configured {
+		s = configurationView(m)
+	} else if !m.ConfigExist {
 		s = configView(m)
 	} else if !m.Chosen {
 		s = choicesView(m)
@@ -203,6 +320,19 @@ func (m model) View() string {
 // Sub-update functions
 // Update loop for the first view where you're choosing a task.
 // need to adjust this and the view to present a config wizard
+
+func (m *model) updateInputs(msg tea.Msg) tea.Cmd {
+	cmds := make([]tea.Cmd, len(m.inputs))
+
+	// Only text inputs with Focus() set will respond, so it's safe to simply
+	// update all of them here without any further logic.
+	for i := range m.inputs {
+		m.inputs[i], cmds[i] = m.inputs[i].Update(msg)
+	}
+
+	return tea.Batch(cmds...)
+}
+
 func updateConfig(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	// Handle key messages for user inputs
@@ -224,6 +354,7 @@ func updateConfig(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
 			if msg.String() == "enter" && !m.ConfigExist {
 				m.ConfigExist = true
 				//initiate writing idk if this is in the optimal place
+				//this will need to happen on a specific selection in the config wizard (like a confirm button)
 				return m, writeConfig(m)
 			}
 			return m, frame()
@@ -295,6 +426,28 @@ func updateChosen(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
 
 // Sub-views
 // configuration wizard, need to add logic and create the wizard for item in struct
+func configurationView(m model) string {
+	var b strings.Builder
+
+	for i := range m.inputs {
+		b.WriteString(m.inputs[i].View())
+		if i < len(m.inputs)-1 {
+			b.WriteRune('\n')
+		}
+	}
+
+	button := &blurredButton
+	if m.focusIndex == len(m.inputs) {
+		button = &focusedButton
+	}
+	fmt.Fprintf(&b, "\n\n%s\n\n", *button)
+
+	b.WriteString(helpStyle.Render("cursor mode is "))
+	b.WriteString(cursorModeHelpStyle.Render(m.cursorMode.String()))
+	b.WriteString(helpStyle.Render(" (ctrl+r to change style)"))
+
+	return b.String()
+}
 func configView(m model) string {
 	c := m.Config
 
@@ -319,7 +472,7 @@ func configView(m model) string {
 func choicesView(m model) string {
 	c := m.Choice
 
-	tpl := "What to do today?\n\n"
+	tpl := "Choices view\n\n"
 	tpl += "%s\n\n"
 	tpl += subtleStyle.Render("j/k, up/down: select") + dotStyle +
 		subtleStyle.Render("enter: choose") + dotStyle +
@@ -327,10 +480,10 @@ func choicesView(m model) string {
 
 	choices := fmt.Sprintf(
 		"%s\n%s\n%s\n%s",
-		checkbox("Plant carrots", c == 0),
-		checkbox("Go to the market", c == 1),
-		checkbox("Read something", c == 2),
-		checkbox("See friends", c == 3),
+		checkbox("choice1", c == 0),
+		checkbox("choice2", c == 1),
+		checkbox("choice3", c == 2),
+		checkbox("choice4", c == 3),
 	)
 
 	return fmt.Sprintf(tpl, choices)
@@ -342,7 +495,7 @@ func chosenView(m model) string {
 
 	switch m.Choice {
 	case 0:
-		msg = fmt.Sprintf("Carrot planting?\n\nCool, we'll need %s and %s...", keywordStyle.Render("libgarden"), keywordStyle.Render("vegeutils"))
+		msg = fmt.Sprintf("Cool...\n\nThis is a %s progress bar", keywordStyle.Render("fake"))
 	case 1:
 		msg = fmt.Sprintf("A trip to the market?\n\nOkay, then we should install %s and %s...", keywordStyle.Render("marketkit"), keywordStyle.Render("libshopping"))
 	case 2:
