@@ -78,7 +78,7 @@ type model struct {
 	// are we quitting?
 	Quitting bool
 	// int for module selection, need to rename
-	Config int
+	Module int
 	// Have we completed ModuleSelection?
 	ModuleSelected bool
 	// Have we completed the configuration wizard?
@@ -140,7 +140,7 @@ func initialModel() model {
 
 	m := model{
 		Quitting:       false,
-		Config:         0,
+		Module:         0,
 		ConfigVars:     configVars,
 		inputs:         make([]textinput.Model, reflect.TypeOf(configVars).NumField()),
 		Configured:     false,
@@ -320,14 +320,14 @@ func moduleSelection(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "j", "down":
-			m.Config++
-			if m.Config > 3 {
-				m.Config = 3
+			m.Module++
+			if m.Module > 3 {
+				m.Module = 3
 			}
 		case "k", "up":
-			m.Config--
-			if m.Config < 0 {
-				m.Config = 0
+			m.Module--
+			if m.Module < 0 {
+				m.Module = 0
 			}
 		case "enter":
 			if msg.String() == "enter" {
@@ -386,7 +386,7 @@ func configurationView(m model) string {
 	return b.String()
 }
 func moduleSelectionView(m model) string {
-	c := m.Config
+	c := m.Module
 
 	tpl := "This is the mfin module selector view\n\n"
 	tpl += "%s\n\n"
