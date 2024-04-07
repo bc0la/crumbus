@@ -75,11 +75,16 @@ type configUpdatedMsg struct {
 }
 
 type model struct {
-	Loaded         bool
-	Quitting       bool
-	Config         int
+	// are we quitting?
+	Quitting bool
+	// int for module selection, need to rename
+	Config int
+	// Have we completed ModuleSelection?
 	ModuleSelected bool
-	ConfigVars     struct {
+	// Have we completed the configuration wizard?
+	Configured bool
+	// Config vars for config.json/tool configuration
+	ConfigVars struct {
 		PwndocUrl        string
 		OutputDir        string
 		ScoutSuiteReport string
@@ -92,7 +97,6 @@ type model struct {
 	focusIndex int
 	inputs     []textinput.Model
 	cursorMode cursor.Mode
-	Configured bool
 }
 
 type configWrittenMsg struct{}
@@ -135,7 +139,6 @@ func initialModel() model {
 	}
 
 	m := model{
-		Loaded:         false,
 		Quitting:       false,
 		Config:         0,
 		ConfigVars:     configVars,
@@ -219,8 +222,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // Sub-update functions
-// Update loop for the first view where you're choosing a task.
-// need to adjust this and the view to present a config wizard
 
 // Update loop for the configuration wizard
 func (m *model) updateConfiguration(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -316,7 +317,6 @@ func (m *model) updateConfiguration(msg tea.Msg) (tea.Model, tea.Cmd) {
 func moduleSelection(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	// Handle key messages for user inputs
-
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "j", "down":
@@ -413,6 +413,8 @@ func checkbox(label string, checked bool) string {
 }
 
 // tea cmds
+
+// Return updated config vars
 func updateConfigVars(m *model) tea.Cmd {
 	return func() tea.Msg {
 		// Get reflect.Value of ConfigVars for setting values
@@ -433,6 +435,7 @@ func updateConfigVars(m *model) tea.Cmd {
 	}
 }
 
+// Write the config to file
 func writeConfig(m *model) tea.Cmd {
 	return func() tea.Msg {
 
