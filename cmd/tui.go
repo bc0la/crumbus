@@ -6,10 +6,8 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"reflect"
-	"strconv"
 	"strings"
 	"time"
 
@@ -17,8 +15,6 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fogleman/ease"
-	"github.com/lucasb-eyer/go-colorful"
 	"github.com/spf13/cobra"
 )
 
@@ -32,10 +28,8 @@ const (
 // General stuff for styling the view
 var (
 	//checkbox styling
-	keywordStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("211"))
 	subtleStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	checkboxStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("212"))
-	progressEmpty = subtleStyle.Render(progressEmptyChar)
 	dotStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("236")).Render(dotChar)
 	mainStyle     = lipgloss.NewStyle().MarginLeft(2)
 
@@ -49,9 +43,6 @@ var (
 
 	focusedButton = focusedStyle.Copy().Render("[ Submit ]")
 	blurredButton = fmt.Sprintf("[ %s ]", blurredStyle.Render("Submit"))
-
-	// Gradient colors we'll use for the progress bar
-	ramp = makeRampStyles("#B14FFF", "#00FFA3", progressBarWidth)
 )
 
 type (
@@ -83,17 +74,11 @@ type configUpdatedMsg struct {
 }
 
 type model struct {
-	Choice int
-	Chosen bool
-
-	Frames      int
-	Progress    float64
-	Loaded      bool
-	Quitting    bool
-	ConfigExist bool
-	Config      int
-	Configed    bool
-	ConfigVars  struct {
+	Loaded     bool
+	Quitting   bool
+	Config     int
+	Configed   bool
+	ConfigVars struct {
 		PwndocUrl        string
 		OutputDir        string
 		ScoutSuiteReport string
@@ -116,7 +101,6 @@ type errMsg struct {
 
 func initialModel() model {
 
-	configExist := false
 	var configVars = struct {
 		PwndocUrl        string
 		OutputDir        string
@@ -136,7 +120,6 @@ func initialModel() model {
 	//if config file exists, set configExist to true
 	//set to false for testing
 	if _, err := os.Stat("config.json"); err == nil {
-		configExist = false
 		//pull values out of config file and set them to the model
 		configData, err := os.ReadFile("config.json")
 		if err != nil {
@@ -152,18 +135,13 @@ func initialModel() model {
 	}
 
 	m := model{
-		Choice:      0,
-		Chosen:      false,
-		Frames:      0,
-		Progress:    0,
-		Loaded:      false,
-		Quitting:    false,
-		ConfigExist: configExist,
-		Config:      0,
-		ConfigVars:  configVars,
-		inputs:      make([]textinput.Model, reflect.TypeOf(configVars).NumField()),
-		Configured:  false,
-		Configed:    false,
+		Loaded:     false,
+		Quitting:   false,
+		Config:     0,
+		ConfigVars: configVars,
+		inputs:     make([]textinput.Model, reflect.TypeOf(configVars).NumField()),
+		Configured: false,
+		Configed:   false,
 	}
 	//textinput bits
 	var t textinput.Model
@@ -308,11 +286,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// perhaps add a "would you like to configure the tool or verify the configuration?" view
 	if !m.Configed {
 		return updateConfig(msg, m)
+	} else {
+		return m, nil
 	}
-	if !m.Chosen {
-		return updateChoices(msg, m)
-	}
-	return updateChosen(msg, m)
 }
 
 // The main view, which just calls the appropriate sub-view
@@ -326,10 +302,6 @@ func (m model) View() string {
 		s = configurationView(m)
 	} else if !m.Configed {
 		s = configView(m)
-	} else if !m.Chosen {
-		s = choicesView(m)
-	} else {
-		s = chosenView(m)
 	}
 	return mainStyle.Render("\n" + s + "\n\n")
 }
@@ -367,7 +339,6 @@ func updateConfig(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
 				m.Config = 0
 			}
 		case "enter":
-			// if msg.String() == "enter" && !m.ConfigExist
 			if msg.String() == "enter" {
 				m.Configed = true
 				//initiate writing idk if this is in the optimal place
@@ -377,11 +348,9 @@ func updateConfig(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
 			return m, frame()
 		}
 		// Example: on pressing enter, initiate config writing
-
+	// Move this to handle earlier
 	// Handle the completion of the config writing
 	case configWrittenMsg:
-		// Update state to reflect the config has been written
-		m.ConfigExist = true
 		// Return model and nil or another command if needed
 		return m, nil
 
@@ -401,51 +370,7 @@ func updateConfig(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// Update loop for the first view where you're choosing a task.
-func updateChoices(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "j", "down":
-			m.Choice++
-			if m.Choice > 3 {
-				m.Choice = 3
-			}
-		case "k", "up":
-			m.Choice--
-			if m.Choice < 0 {
-				m.Choice = 0
-			}
-		case "enter":
-			m.Chosen = true
-			return m, frame()
-		}
-
-	}
-
-	return m, nil
-}
-
 // Update loop for the second view after a choice has been made
-func updateChosen(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
-	switch msg.(type) {
-	case frameMsg:
-		if !m.Loaded {
-			m.Frames++
-			m.Progress = ease.OutBounce(float64(m.Frames) / float64(100))
-			if m.Progress >= 1 {
-				m.Progress = 1
-				m.Loaded = true
-
-				return m, tick()
-			}
-			return m, frame()
-		}
-
-	}
-
-	return m, nil
-}
 
 // Sub-views
 // configuration wizard, need to add logic and create the wizard for item in struct
@@ -492,70 +417,11 @@ func configView(m model) string {
 	return fmt.Sprintf(tpl, configs)
 }
 
-// where you're choosing a task
-func choicesView(m model) string {
-	c := m.Choice
-
-	tpl := "Choices view\n\n"
-	tpl += "%s\n\n"
-	tpl += subtleStyle.Render("j/k, up/down: select") + dotStyle +
-		subtleStyle.Render("enter: choose") + dotStyle +
-		subtleStyle.Render("q, esc: quit")
-
-	choices := fmt.Sprintf(
-		"%s\n%s\n%s\n%s",
-		checkbox("choice1", c == 0),
-		checkbox("choice2", c == 1),
-		checkbox("choice3", c == 2),
-		checkbox("choice4", c == 3),
-	)
-
-	return fmt.Sprintf(tpl, choices)
-}
-
-// The second view, after a task has been chosen
-func chosenView(m model) string {
-	var msg string
-
-	switch m.Choice {
-	case 0:
-		msg = fmt.Sprintf("Cool...\n\nThis is a %s progress bar", keywordStyle.Render("fake"))
-	case 1:
-		msg = fmt.Sprintf("A trip to the market?\n\nOkay, then we should install %s and %s...", keywordStyle.Render("marketkit"), keywordStyle.Render("libshopping"))
-	case 2:
-		msg = fmt.Sprintf("Reading time?\n\nOkay, cool, then we'll need a library. Yes, an %s.", keywordStyle.Render("actual library"))
-	default:
-		msg = fmt.Sprintf("It's always good to see friends.\n\nFetching %s and %s...", keywordStyle.Render("social-skills"), keywordStyle.Render("conversationutils"))
-	}
-
-	label := "Downloading..."
-	if m.Loaded {
-		label = "Downloaded. Press q to exit ..."
-	}
-
-	return msg + "\n\n" + label + "\n" + progressbar(m.Progress) + "%"
-}
-
 func checkbox(label string, checked bool) string {
 	if checked {
 		return checkboxStyle.Render("[x] " + label)
 	}
 	return fmt.Sprintf("[ ] %s", label)
-}
-
-func progressbar(percent float64) string {
-	w := float64(progressBarWidth)
-
-	fullSize := int(math.Round(w * percent))
-	var fullCells string
-	for i := 0; i < fullSize; i++ {
-		fullCells += ramp[i].Render(progressFullChar)
-	}
-
-	emptySize := int(w) - fullSize
-	emptyCells := strings.Repeat(progressEmpty, emptySize)
-
-	return fmt.Sprintf("%s%s %3.0f", fullCells, emptyCells, math.Round(percent*100))
 }
 
 // tea cmds
@@ -607,33 +473,6 @@ func writeConfig(m model) tea.Cmd {
 }
 
 // Utils
-
-// Generate a blend of colors.
-func makeRampStyles(colorA, colorB string, steps float64) (s []lipgloss.Style) {
-	cA, _ := colorful.Hex(colorA)
-	cB, _ := colorful.Hex(colorB)
-
-	for i := 0.0; i < steps; i++ {
-		c := cA.BlendLuv(cB, i/steps)
-		s = append(s, lipgloss.NewStyle().Foreground(lipgloss.Color(colorToHex(c))))
-	}
-	return
-}
-
-// Convert a colorful.Color to a hexadecimal format.
-func colorToHex(c colorful.Color) string {
-	return fmt.Sprintf("#%s%s%s", colorFloatToHex(c.R), colorFloatToHex(c.G), colorFloatToHex(c.B))
-}
-
-// Helper function for converting colors to hex. Assumes a value between 0 and
-// 1.
-func colorFloatToHex(f float64) (s string) {
-	s = strconv.FormatInt(int64(f*255), 16)
-	if len(s) == 1 {
-		s = "0" + s
-	}
-	return
-}
 
 // tuiCmd represents the tui command
 var tuiCmd = &cobra.Command{
