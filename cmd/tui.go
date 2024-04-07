@@ -71,6 +71,17 @@ func frame() tea.Cmd {
 	})
 }
 
+type configUpdatedMsg struct {
+	ConfigVars struct {
+		PwndocUrl        string
+		OutputDir        string
+		ScoutSuiteReport string
+		AwsAccessKey     string
+		AwsSecretKey     string
+		AwsToken         string
+	}
+}
+
 type model struct {
 	Choice int
 	Chosen bool
@@ -216,6 +227,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
+	//this should maybe be in the subupdate function
+
 	if !m.Configured {
 		switch msg := msg.(type) {
 		case tea.KeyMsg:
@@ -242,8 +255,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Did the user press enter while the submit button was focused?
 				// If so,
 				if s == "enter" && m.focusIndex == len(m.inputs) {
+
 					m.Configured = true
-					return m, m.updateInputs(msg)
+
+					return m, updateConfigVars(m)
 				}
 
 				// Cycle indexes
@@ -280,7 +295,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Handle character input and blinking
 		if !m.Configured {
-			cmd := m.updateInputs(msg)
+			cmd := m.updateConfiguration(msg)
 
 			return m, cmd
 		}
@@ -321,7 +336,7 @@ func (m model) View() string {
 // Update loop for the first view where you're choosing a task.
 // need to adjust this and the view to present a config wizard
 
-func (m *model) updateInputs(msg tea.Msg) tea.Cmd {
+func (m *model) updateConfiguration(msg tea.Msg) tea.Cmd {
 	cmds := make([]tea.Cmd, len(m.inputs))
 
 	// Only text inputs with Focus() set will respond, so it's safe to simply
@@ -350,12 +365,12 @@ func updateConfig(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
 				m.Config = 0
 			}
 		case "enter":
-
-			if msg.String() == "enter" && !m.ConfigExist {
+			// if msg.String() == "enter" && !m.ConfigExist
+			if msg.String() == "enter" {
 				m.ConfigExist = true
 				//initiate writing idk if this is in the optimal place
 				//this will need to happen on a specific selection in the config wizard (like a confirm button)
-				return m, writeConfig(m)
+				return m, frame()
 			}
 			return m, frame()
 		}
@@ -368,6 +383,11 @@ func updateConfig(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
 		// Return model and nil or another command if needed
 		return m, nil
 
+	case configUpdatedMsg:
+		// Update the model's configuration variables with the new values
+		m.ConfigVars = msg.ConfigVars
+		// Optionally, proceed to write the configuration to file or any other next step
+		return m, writeConfig(m)
 	// In your update function
 	case errMsg:
 		// Handle the error, maybe log it or display an error message in the UI
@@ -441,10 +461,11 @@ func configurationView(m model) string {
 		button = &focusedButton
 	}
 	fmt.Fprintf(&b, "\n\n%s\n\n", *button)
-
-	b.WriteString(helpStyle.Render("cursor mode is "))
+	b.WriteString(helpStyle.Render("Leave values empty to keep the current value."))
+	b.WriteString(helpStyle.Render("\ncursor mode is "))
 	b.WriteString(cursorModeHelpStyle.Render(m.cursorMode.String()))
 	b.WriteString(helpStyle.Render(" (ctrl+r to change style)"))
+	b.WriteString(helpStyle.Render("\nPress ctrl+c or esc to quit."))
 
 	return b.String()
 }
@@ -499,9 +520,9 @@ func chosenView(m model) string {
 	case 1:
 		msg = fmt.Sprintf("A trip to the market?\n\nOkay, then we should install %s and %s...", keywordStyle.Render("marketkit"), keywordStyle.Render("libshopping"))
 	case 2:
-		msg = fmt.Sprintf("Reading time?\n\nOkay, cool, then we’ll need a library. Yes, an %s.", keywordStyle.Render("actual library"))
+		msg = fmt.Sprintf("Reading time?\n\nOkay, cool, then we'll need a library. Yes, an %s.", keywordStyle.Render("actual library"))
 	default:
-		msg = fmt.Sprintf("It’s always good to see friends.\n\nFetching %s and %s...", keywordStyle.Render("social-skills"), keywordStyle.Render("conversationutils"))
+		msg = fmt.Sprintf("It's always good to see friends.\n\nFetching %s and %s...", keywordStyle.Render("social-skills"), keywordStyle.Render("conversationutils"))
 	}
 
 	label := "Downloading..."
@@ -535,6 +556,37 @@ func progressbar(percent float64) string {
 }
 
 // tea cmds
+func updateConfigVars(m model) tea.Cmd {
+	return func() tea.Msg {
+		// Create a copy of the current ConfigVars to modify
+		updatedConfigVars := m.ConfigVars
+
+		// Update each field only if the corresponding input is not empty
+		if val := m.inputs[0].Value(); val != "" {
+			updatedConfigVars.PwndocUrl = val
+		}
+		if val := m.inputs[1].Value(); val != "" {
+			updatedConfigVars.OutputDir = val
+		}
+		if val := m.inputs[2].Value(); val != "" {
+			updatedConfigVars.ScoutSuiteReport = val
+		}
+		if val := m.inputs[3].Value(); val != "" {
+			updatedConfigVars.AwsAccessKey = val
+		}
+		if val := m.inputs[4].Value(); val != "" {
+			updatedConfigVars.AwsSecretKey = val
+		}
+		if val := m.inputs[5].Value(); val != "" {
+			updatedConfigVars.AwsToken = val
+		}
+
+		// Return a message with the updated configuration variables
+		return configUpdatedMsg{
+			ConfigVars: updatedConfigVars,
+		}
+	}
+}
 func writeConfig(m model) tea.Cmd {
 	return func() tea.Msg {
 
