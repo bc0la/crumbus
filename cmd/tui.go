@@ -70,6 +70,7 @@ type configUpdatedMsg struct {
 		AwsAccessKey     string
 		AwsSecretKey     string
 		AwsToken         string
+		TestValue        string
 	}
 }
 
@@ -85,6 +86,7 @@ type model struct {
 		AwsAccessKey     string
 		AwsSecretKey     string
 		AwsToken         string
+		TestValue        string
 	}
 	// textinput
 	focusIndex int
@@ -100,7 +102,6 @@ type errMsg struct {
 }
 
 func initialModel() model {
-
 	var configVars = struct {
 		PwndocUrl        string
 		OutputDir        string
@@ -108,6 +109,7 @@ func initialModel() model {
 		AwsAccessKey     string
 		AwsSecretKey     string
 		AwsToken         string
+		TestValue        string
 	}{
 		PwndocUrl:        "https://192.168.1.51:8443",
 		OutputDir:        "/home/username/crumbus/outputs",
@@ -115,23 +117,21 @@ func initialModel() model {
 		AwsAccessKey:     "",
 		AwsSecretKey:     "",
 		AwsToken:         "",
+		TestValue:        "test",
 	}
 
-	//if config file exists, set configExist to true
-	//set to false for testing
+	// Check if config file exists and load it
 	if _, err := os.Stat("config.json"); err == nil {
-		//pull values out of config file and set them to the model
 		configData, err := os.ReadFile("config.json")
 		if err != nil {
 			fmt.Println("Error reading config file:", err)
 		}
 
-		//assign from json
+		// Unmarshal JSON into configVars
 		err = json.Unmarshal(configData, &configVars)
 		if err != nil {
 			fmt.Println("Error unmarshalling config file:", err)
 		}
-
 	}
 
 	m := model{
@@ -143,34 +143,28 @@ func initialModel() model {
 		Configured: false,
 		Configed:   false,
 	}
-	//textinput bits
-	var t textinput.Model
-	for i := range m.inputs {
-		t = textinput.New()
-		t.Cursor.Style = cursorStyle
-		t.CharLimit = 32
 
-		switch i {
-		case 0:
-			t.Placeholder = "PwnDocURL: " + m.ConfigVars.PwndocUrl
-			t.Focus()
-			t.PromptStyle = focusedStyle
-			t.TextStyle = focusedStyle
-		case 1:
-			t.Placeholder = "OutPutDir: " + m.ConfigVars.OutputDir
-		case 2:
-			t.Placeholder = "ScoutSuiteReport: " + m.ConfigVars.ScoutSuiteReport
-		case 3:
-			t.Placeholder = "AWSAccessKey: " + m.ConfigVars.AwsAccessKey
-		case 4:
-			t.Placeholder = "AWSSecretKey: " + m.ConfigVars.AwsSecretKey
-		case 5:
-			t.Placeholder = "AWSToken: " + m.ConfigVars.AwsToken
+	// Dynamically create text inputs based on the fields of ConfigVars
+	t := reflect.TypeOf(configVars)
+	v := reflect.ValueOf(configVars)
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		value := v.Field(i).String()
 
+		input := textinput.New()
+		input.Cursor.Style = cursorStyle
+		input.CharLimit = 100
+		input.Placeholder = fmt.Sprintf("%s: %s", field.Name, value)
+
+		if i == 0 {
+			input.Focus()
+			input.PromptStyle = focusedStyle
+			input.TextStyle = focusedStyle
 		}
 
-		m.inputs[i] = t
+		m.inputs[i] = input
 	}
+
 	return m
 }
 
@@ -200,6 +194,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Quitting = true
 			return m, tea.Quit
 		}
+		// don't quit on q if we're in the text input configuration view
 		if k == "q" {
 			if m.Configured {
 				m.Quitting = true
@@ -207,82 +202,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
-	//this should maybe be in the subupdate function
 
-	if !m.Configured {
-		switch msg := msg.(type) {
-		case tea.KeyMsg:
-			switch msg.String() {
-			case "ctrl+c", "esc":
-				return m, tea.Quit
-
-			// Change cursor mode
-			case "ctrl+r":
-				m.cursorMode++
-				if m.cursorMode > cursor.CursorHide {
-					m.cursorMode = cursor.CursorBlink
-				}
-				cmds := make([]tea.Cmd, len(m.inputs))
-				for i := range m.inputs {
-					cmds[i] = m.inputs[i].Cursor.SetMode(m.cursorMode)
-				}
-				return m, tea.Batch(cmds...)
-
-			// Set focus to next input
-			case "tab", "shift+tab", "enter", "up", "down":
-				s := msg.String()
-
-				// Did the user press enter while the submit button was focused?
-				// If so,
-				if s == "enter" && m.focusIndex == len(m.inputs) {
-
-					m.Configured = true
-
-					return m, updateConfigVars(m)
-				}
-
-				// Cycle indexes
-				if s == "up" || s == "shift+tab" {
-					m.focusIndex--
-				} else {
-					m.focusIndex++
-				}
-
-				if m.focusIndex > len(m.inputs) {
-					m.focusIndex = 0
-				} else if m.focusIndex < 0 {
-					m.focusIndex = len(m.inputs)
-				}
-
-				cmds := make([]tea.Cmd, len(m.inputs))
-				for i := 0; i <= len(m.inputs)-1; i++ {
-					if i == m.focusIndex {
-						// Set focused state
-						cmds[i] = m.inputs[i].Focus()
-						m.inputs[i].PromptStyle = focusedStyle
-						m.inputs[i].TextStyle = focusedStyle
-						continue
-					}
-					// Remove focused state
-					m.inputs[i].Blur()
-					m.inputs[i].PromptStyle = noStyle
-					m.inputs[i].TextStyle = noStyle
-				}
-
-				return m, tea.Batch(cmds...)
-			}
-		}
-
-		// Handle character input and blinking
-		if !m.Configured {
-			cmd := m.updateConfiguration(msg)
-
-			return m, cmd
-		}
-	}
 	// Hand off the message and model to the appropriate update function for the
 	// appropriate view based on the current state.
+	if !m.Configured {
+		m, cmd := m.updateConfiguration(msg)
 
+		return m, cmd
+	}
 	// perhaps add a "would you like to configure the tool or verify the configuration?" view
 	if !m.Configed {
 		return updateConfig(msg, m)
@@ -310,7 +237,7 @@ func (m model) View() string {
 // Update loop for the first view where you're choosing a task.
 // need to adjust this and the view to present a config wizard
 
-func (m *model) updateConfiguration(msg tea.Msg) tea.Cmd {
+func (m *model) updateConfiguration(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmds := make([]tea.Cmd, len(m.inputs))
 
 	// Only text inputs with Focus() set will respond, so it's safe to simply
@@ -318,8 +245,85 @@ func (m *model) updateConfiguration(msg tea.Msg) tea.Cmd {
 	for i := range m.inputs {
 		m.inputs[i], cmds[i] = m.inputs[i].Update(msg)
 	}
+	// Handle config related updates
+	switch msg := msg.(type) {
+	case configWrittenMsg:
+		// Return model and nil or another command if needed
+		m.Configured = true
+		return m, nil
 
-	return tea.Batch(cmds...)
+	case configUpdatedMsg:
+		// Update the model's configuration variables with the new values
+		m.ConfigVars = msg.ConfigVars
+
+		// Optionally, proceed to write the configuration to file or any other next step
+		return m, writeConfig(m)
+	// In your update function
+	case errMsg:
+		// Handle the error, maybe log it or display an error message in the UI
+		fmt.Println("Error writing config:", msg.Err)
+		return m, nil
+	}
+
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c", "esc":
+			return m, tea.Quit
+
+		// Change cursor mode
+		case "ctrl+r":
+			m.cursorMode++
+			if m.cursorMode > cursor.CursorHide {
+				m.cursorMode = cursor.CursorBlink
+			}
+			cmds := make([]tea.Cmd, len(m.inputs))
+			for i := range m.inputs {
+				cmds[i] = m.inputs[i].Cursor.SetMode(m.cursorMode)
+			}
+			return m, tea.Batch(cmds...)
+
+		// Set focus to next input
+		case "tab", "shift+tab", "enter", "up", "down":
+			s := msg.String()
+
+			// Did the user press enter while the submit button was focused?
+			// If so,
+			if s == "enter" && m.focusIndex == len(m.inputs) {
+
+				return m, updateConfigVars(m)
+			}
+
+			// Cycle indexes
+			if s == "up" || s == "shift+tab" {
+				m.focusIndex--
+			} else {
+				m.focusIndex++
+			}
+
+			if m.focusIndex > len(m.inputs) {
+				m.focusIndex = 0
+			} else if m.focusIndex < 0 {
+				m.focusIndex = len(m.inputs)
+			}
+
+			cmds := make([]tea.Cmd, len(m.inputs))
+			for i := 0; i <= len(m.inputs)-1; i++ {
+				if i == m.focusIndex {
+					// Set focused state
+					cmds[i] = m.inputs[i].Focus()
+					m.inputs[i].PromptStyle = focusedStyle
+					m.inputs[i].TextStyle = focusedStyle
+					continue
+				}
+				// Remove focused state
+				m.inputs[i].Blur()
+				m.inputs[i].PromptStyle = noStyle
+				m.inputs[i].TextStyle = noStyle
+			}
+		}
+	}
+	return m, tea.Batch(cmds...)
 }
 
 func updateConfig(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
@@ -348,23 +352,7 @@ func updateConfig(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
 			return m, frame()
 		}
 		// Example: on pressing enter, initiate config writing
-	// Move this to handle earlier
-	// Handle the completion of the config writing
-	case configWrittenMsg:
-		// Return model and nil or another command if needed
-		return m, nil
 
-	case configUpdatedMsg:
-		// Update the model's configuration variables with the new values
-		m.ConfigVars = msg.ConfigVars
-
-		// Optionally, proceed to write the configuration to file or any other next step
-		return m, writeConfig(m)
-	// In your update function
-	case errMsg:
-		// Handle the error, maybe log it or display an error message in the UI
-		fmt.Println("Error writing config:", msg.Err)
-		return m, nil
 	}
 
 	return m, nil
@@ -425,38 +413,27 @@ func checkbox(label string, checked bool) string {
 }
 
 // tea cmds
-func updateConfigVars(m model) tea.Cmd {
+func updateConfigVars(m *model) tea.Cmd {
 	return func() tea.Msg {
-		// Create a copy of the current ConfigVars to modify
-		updatedConfigVars := m.ConfigVars
+		// Get reflect.Value of ConfigVars for setting values
+		v := reflect.ValueOf(&m.ConfigVars).Elem()
 
-		// Update each field only if the corresponding input is not empty
-		if val := m.inputs[0].Value(); val != "" {
-			updatedConfigVars.PwndocUrl = val
-		}
-		if val := m.inputs[1].Value(); val != "" {
-			updatedConfigVars.OutputDir = val
-		}
-		if val := m.inputs[2].Value(); val != "" {
-			updatedConfigVars.ScoutSuiteReport = val
-		}
-		if val := m.inputs[3].Value(); val != "" {
-			updatedConfigVars.AwsAccessKey = val
-		}
-		if val := m.inputs[4].Value(); val != "" {
-			updatedConfigVars.AwsSecretKey = val
-		}
-		if val := m.inputs[5].Value(); val != "" {
-			updatedConfigVars.AwsToken = val
+		for i, input := range m.inputs {
+			if val := input.Value(); val != "" {
+				// Use field index to set the value dynamically
+				v.Field(i).SetString(val)
+			}
 		}
 
-		// Return a message with the updated configuration variables
+		// Return a message indicating the update is complete
+		// This part remains the same as your current implementation
 		return configUpdatedMsg{
-			ConfigVars: updatedConfigVars,
+			ConfigVars: m.ConfigVars,
 		}
 	}
 }
-func writeConfig(m model) tea.Cmd {
+
+func writeConfig(m *model) tea.Cmd {
 	return func() tea.Msg {
 
 		// turn struct into json
