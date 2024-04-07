@@ -75,11 +75,11 @@ type configUpdatedMsg struct {
 }
 
 type model struct {
-	Loaded     bool
-	Quitting   bool
-	Config     int
-	Configed   bool
-	ConfigVars struct {
+	Loaded         bool
+	Quitting       bool
+	Config         int
+	ModuleSelected bool
+	ConfigVars     struct {
 		PwndocUrl        string
 		OutputDir        string
 		ScoutSuiteReport string
@@ -135,13 +135,13 @@ func initialModel() model {
 	}
 
 	m := model{
-		Loaded:     false,
-		Quitting:   false,
-		Config:     0,
-		ConfigVars: configVars,
-		inputs:     make([]textinput.Model, reflect.TypeOf(configVars).NumField()),
-		Configured: false,
-		Configed:   false,
+		Loaded:         false,
+		Quitting:       false,
+		Config:         0,
+		ConfigVars:     configVars,
+		inputs:         make([]textinput.Model, reflect.TypeOf(configVars).NumField()),
+		Configured:     false,
+		ModuleSelected: false,
 	}
 
 	// Dynamically create text inputs based on the fields of ConfigVars
@@ -210,33 +210,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, cmd
 	}
-	// perhaps add a "would you like to configure the tool or verify the configuration?" view
-	if !m.Configed {
-		return updateConfig(msg, m)
+	if !m.ModuleSelected {
+		return moduleSelection(msg, m)
 	} else {
-		return m, nil
+		return m, tea.Quit
 	}
-}
 
-// The main view, which just calls the appropriate sub-view
-func (m model) View() string {
-	var s string
-	if m.Quitting {
-		return "\n  See you later!\n\n"
-	}
-	// add config file view
-	if !m.Configured {
-		s = configurationView(m)
-	} else if !m.Configed {
-		s = configView(m)
-	}
-	return mainStyle.Render("\n" + s + "\n\n")
 }
 
 // Sub-update functions
 // Update loop for the first view where you're choosing a task.
 // need to adjust this and the view to present a config wizard
 
+// Update loop for the configuration wizard
 func (m *model) updateConfiguration(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmds := make([]tea.Cmd, len(m.inputs))
 
@@ -326,7 +312,8 @@ func (m *model) updateConfiguration(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func updateConfig(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
+// Update loop for the moduleSelection view
+func moduleSelection(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	// Handle key messages for user inputs
 
@@ -344,7 +331,7 @@ func updateConfig(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			if msg.String() == "enter" {
-				m.Configed = true
+				m.ModuleSelected = true
 				//initiate writing idk if this is in the optimal place
 				//this will need to happen on a specific selection in the config wizard (like a confirm button)
 				return m, frame()
@@ -358,7 +345,20 @@ func updateConfig(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// Update loop for the second view after a choice has been made
+// The main view, which just calls the appropriate sub-view
+func (m model) View() string {
+	var s string
+	if m.Quitting {
+		return "\n  See you later!\n\n"
+	}
+	// add config file view
+	if !m.Configured {
+		s = configurationView(m)
+	} else if !m.ModuleSelected {
+		s = moduleSelectionView(m)
+	}
+	return mainStyle.Render("\n" + s + "\n\n")
+}
 
 // Sub-views
 // configuration wizard, need to add logic and create the wizard for item in struct
@@ -385,10 +385,10 @@ func configurationView(m model) string {
 
 	return b.String()
 }
-func configView(m model) string {
+func moduleSelectionView(m model) string {
 	c := m.Config
 
-	tpl := "This is the mfin config view\n\n"
+	tpl := "This is the mfin module selector view\n\n"
 	tpl += "%s\n\n"
 	tpl += subtleStyle.Render("j/k, up/down: select") + dotStyle +
 		subtleStyle.Render("enter: choose") + dotStyle +
