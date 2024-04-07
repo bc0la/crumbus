@@ -92,6 +92,7 @@ type model struct {
 	Quitting    bool
 	ConfigExist bool
 	Config      int
+	Configed    bool
 	ConfigVars  struct {
 		PwndocUrl        string
 		OutputDir        string
@@ -162,6 +163,7 @@ func initialModel() model {
 		ConfigVars:  configVars,
 		inputs:      make([]textinput.Model, reflect.TypeOf(configVars).NumField()),
 		Configured:  false,
+		Configed:    false,
 	}
 	//textinput bits
 	var t textinput.Model
@@ -304,7 +306,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// appropriate view based on the current state.
 
 	// perhaps add a "would you like to configure the tool or verify the configuration?" view
-	if !m.ConfigExist {
+	if !m.Configed {
 		return updateConfig(msg, m)
 	}
 	if !m.Chosen {
@@ -322,7 +324,7 @@ func (m model) View() string {
 	// add config file view
 	if !m.Configured {
 		s = configurationView(m)
-	} else if !m.ConfigExist {
+	} else if !m.Configed {
 		s = configView(m)
 	} else if !m.Chosen {
 		s = choicesView(m)
@@ -367,7 +369,7 @@ func updateConfig(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
 		case "enter":
 			// if msg.String() == "enter" && !m.ConfigExist
 			if msg.String() == "enter" {
-				m.ConfigExist = true
+				m.Configed = true
 				//initiate writing idk if this is in the optimal place
 				//this will need to happen on a specific selection in the config wizard (like a confirm button)
 				return m, frame()
@@ -386,6 +388,7 @@ func updateConfig(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
 	case configUpdatedMsg:
 		// Update the model's configuration variables with the new values
 		m.ConfigVars = msg.ConfigVars
+
 		// Optionally, proceed to write the configuration to file or any other next step
 		return m, writeConfig(m)
 	// In your update function
@@ -643,7 +646,6 @@ Cobra is a CLI library for Go that empowers applications.
 This application is a tool to generate the needed files
 to quickly create a Cobra application.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("tui called")
 		startTui()
 
 	},
