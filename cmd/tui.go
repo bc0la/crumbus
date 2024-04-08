@@ -273,7 +273,7 @@ func (m *model) updateConfiguration(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Set focus to next input
 		case "tab", "shift+tab", "enter", "up", "down":
 			s := msg.String()
-
+			prevFocusIndex := m.focusIndex
 			// Did the user press enter while the submit button was focused?
 			// If so,
 			if s == "enter" && m.focusIndex == len(m.inputs) {
@@ -294,7 +294,14 @@ func (m *model) updateConfiguration(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.focusIndex = len(m.inputs)
 			}
 
+			// After updating focusIndex, check if focus has changed. This seems a bit hacky but oh well
+			if prevFocusIndex != m.focusIndex {
+				// Focus has changed, ensure the newly focused input's cursor blinks
+				cmds = append(cmds, textinput.Blink)
+			}
+
 			cmds := make([]tea.Cmd, len(m.inputs))
+			cmds = append(cmds, m.updateInputs(msg))
 			for i := 0; i <= len(m.inputs)-1; i++ {
 				if i == m.focusIndex {
 					// Set focused state
@@ -310,6 +317,8 @@ func (m *model) updateConfiguration(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
+	//	cmds = append(cmds, textinput.Blink)
+
 	return m, tea.Batch(cmds...)
 }
 
@@ -413,6 +422,19 @@ func checkbox(label string, checked bool) string {
 }
 
 // tea cmds
+
+// Update the text inputs
+func (m *model) updateInputs(msg tea.Msg) tea.Cmd {
+	cmds := make([]tea.Cmd, len(m.inputs))
+
+	// Only text inputs with Focus() set will respond, so it's safe to simply
+	// update all of them here without any further logic.
+	for i := range m.inputs {
+		m.inputs[i], cmds[i] = m.inputs[i].Update(msg)
+	}
+
+	return tea.Batch(cmds...)
+}
 
 // Return updated config vars
 func updateConfigVars(m *model) tea.Cmd {
