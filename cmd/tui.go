@@ -40,6 +40,7 @@ var (
 	noStyle             = lipgloss.NewStyle()
 	helpStyle           = blurredStyle.Copy()
 	cursorModeHelpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	highlightStyle      = lipgloss.NewStyle().Background(lipgloss.Color("205"))
 
 	focusedButton = focusedStyle.Copy().Render("[ Submit ]")
 	blurredButton = fmt.Sprintf("[ %s ]", blurredStyle.Render("Submit"))
@@ -79,6 +80,9 @@ type model struct {
 	Quitting bool
 	// int for module selection, need to rename
 	Module int
+	// ModuleSelection map
+	ModuleSelection    map[string]bool
+	currentModuleIndex int // Add this line
 	// Have we completed ModuleSelection?
 	ModuleSelected bool
 	// Have we completed the configuration wizard?
@@ -139,12 +143,20 @@ func initialModel() model {
 	}
 
 	m := model{
-		Quitting:       false,
-		Module:         0,
-		ConfigVars:     configVars,
-		inputs:         make([]textinput.Model, reflect.TypeOf(configVars).NumField()),
-		Configured:     false,
-		ModuleSelected: false,
+		Quitting:           false,
+		Module:             0,
+		ConfigVars:         configVars,
+		inputs:             make([]textinput.Model, reflect.TypeOf(configVars).NumField()),
+		Configured:         false,
+		ModuleSelected:     false,
+		ModuleSelection:    make(map[string]bool),
+		currentModuleIndex: 0,
+	}
+
+	// Dynamically adding modules
+	moduleNames := []string{"config", "configs", "poop", "stuff"} // Example module names
+	for _, moduleName := range moduleNames {
+		m.ModuleSelection[moduleName] = false
 	}
 
 	// Dynamically create text inputs based on the fields of ConfigVars
@@ -324,34 +336,41 @@ func (m *model) updateConfiguration(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // Update loop for the moduleSelection view
 func moduleSelection(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
+	// Assuming you have an ordered list of module names
+	moduleNames := []string{"config", "configs", "poop", "stuff"} // Keep this synchronized with your map
+
+	// Handling key inputs
 	switch msg := msg.(type) {
-	// Handle key messages for user inputs
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "j", "down":
-			m.Module++
-			if m.Module > 3 {
-				m.Module = 3
-			}
+			m.currentModuleIndex = (m.currentModuleIndex + 1) % len(moduleNames)
 		case "k", "up":
-			m.Module--
-			if m.Module < 0 {
-				m.Module = 0
-			}
-		case "enter":
-			if msg.String() == "enter" {
-				m.ModuleSelected = true
-				//initiate writing idk if this is in the optimal place
-				//this will need to happen on a specific selection in the config wizard (like a confirm button)
-				return m, frame()
-			}
-			return m, frame()
-		}
-		// Example: on pressing enter, initiate config writing
+			m.currentModuleIndex = (m.currentModuleIndex - 1 + len(moduleNames)) % len(moduleNames)
+		case " ":
 
+			// Toggle the selected state.
+			currentModuleName := moduleNames[m.currentModuleIndex]
+			m.ModuleSelection[currentModuleName] = !m.ModuleSelection[currentModuleName]
+			// Explicitly request a re-render to ensure the view updates.
+			return m, nil
+
+		case "enter":
+			// Confirm selections - This is where you would handle the next steps based on selections
+
+			m.ModuleSelected = true // Assuming you have a way to move forward with the selected modules
+			return m, nil           // or another Cmd that moves the app forward
+		case "q", "esc":
+			// Exit module selection
+			return m, tea.Quit
+		}
+
+		return m, nil // Ensure we return the updated model with no command to quit unless specified
 	}
 
-	return m, nil
+	return m, tea.Batch(cmds...)
 }
 
 // The main view, which just calls the appropriate sub-view
@@ -395,23 +414,26 @@ func configurationView(m model) string {
 	return b.String()
 }
 func moduleSelectionView(m model) string {
-	c := m.Module
+	var b strings.Builder
+	b.WriteString("This is the module selector view\n\n")
 
-	tpl := "This is the mfin module selector view\n\n"
-	tpl += "%s\n\n"
-	tpl += subtleStyle.Render("j/k, up/down: select") + dotStyle +
-		subtleStyle.Render("enter: choose") + dotStyle +
-		subtleStyle.Render("q, esc: quit")
+	moduleNames := []string{"config", "configs", "poop", "stuff"} // This should match the list used for navigation
 
-	configs := fmt.Sprintf(
-		"%s\n%s\n%s\n%s",
-		checkbox("config", c == 0),
-		checkbox("configs", c == 1),
-		checkbox("poop", c == 2),
-		checkbox("stuff", c == 3),
-	)
+	// Iterate through moduleNames to maintain order
+	for i, moduleName := range moduleNames {
+		if i == m.currentModuleIndex {
+			b.WriteString(highlightStyle.Render(checkbox(moduleName, m.ModuleSelection[moduleName])) + "\n")
+		} else {
+			b.WriteString(checkbox(moduleName, m.ModuleSelection[moduleName]) + "\n")
+		}
+	}
 
-	return fmt.Sprintf(tpl, configs)
+	b.WriteString(subtleStyle.Render("\nj/k, up/down: select") + dotStyle +
+		subtleStyle.Render("space: toggle selection") + dotStyle +
+		subtleStyle.Render("enter: confirm selections") + dotStyle +
+		subtleStyle.Render("q, esc: quit"))
+
+	return b.String()
 }
 
 func checkbox(label string, checked bool) string {
