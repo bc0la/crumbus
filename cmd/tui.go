@@ -47,8 +47,8 @@ var (
 )
 
 type (
-	tickMsg  struct{}
-	frameMsg struct{}
+	tickMsg struct{}
+	//frameMsg struct{}
 )
 
 func tick() tea.Cmd {
@@ -57,11 +57,11 @@ func tick() tea.Cmd {
 	})
 }
 
-func frame() tea.Cmd {
-	return tea.Tick(time.Second/60, func(time.Time) tea.Msg {
-		return frameMsg{}
-	})
-}
+// func frame() tea.Cmd {
+// 	return tea.Tick(time.Second/60, func(time.Time) tea.Msg {
+// 		return frameMsg{}
+// 	})
+// }
 
 type configUpdatedMsg struct {
 	ConfigVars struct {
@@ -82,7 +82,19 @@ type model struct {
 	Module int
 	// ModuleSelection map
 	ModuleSelection    map[string]bool
-	currentModuleIndex int // Add this line
+	currentModuleIndex int
+
+	// Pwndoc Check Modules
+	PwndocModules      map[string]bool
+	currentPwndocIndex int
+	// Non Pwndoc Check Modules
+	NonPwndocModules      map[string]bool
+	currentNonPwndocIndex int
+
+	// Guided Check Modules
+	GuidedCheckModules      map[string]bool
+	currentGuidedCheckIndex int
+
 	// Have we completed ModuleSelection?
 	ModuleSelected bool
 	// Have we completed the configuration wizard?
@@ -143,20 +155,47 @@ func initialModel() model {
 	}
 
 	m := model{
-		Quitting:           false,
-		Module:             0,
-		ConfigVars:         configVars,
-		inputs:             make([]textinput.Model, reflect.TypeOf(configVars).NumField()),
-		Configured:         false,
-		ModuleSelected:     false,
-		ModuleSelection:    make(map[string]bool),
-		currentModuleIndex: 0,
+		Quitting:                false,
+		Module:                  0,
+		ConfigVars:              configVars,
+		inputs:                  make([]textinput.Model, reflect.TypeOf(configVars).NumField()),
+		Configured:              false,
+		ModuleSelected:          false,
+		ModuleSelection:         make(map[string]bool),
+		PwndocModules:           make(map[string]bool),
+		NonPwndocModules:        make(map[string]bool),
+		GuidedCheckModules:      make(map[string]bool),
+		currentModuleIndex:      0,
+		currentPwndocIndex:      0,
+		currentNonPwndocIndex:   0,
+		currentGuidedCheckIndex: 0,
 	}
 
 	// Dynamically adding modules
-	moduleNames := []string{"config", "configs", "poop", "stuff"} // Example module names
+	moduleNames := []string{"Pwndoc Checks", "Non Pwndoc Checks", "Guided Checks"} // Example module names
 	for _, moduleName := range moduleNames {
-		m.ModuleSelection[moduleName] = false
+		m.ModuleSelection[moduleName] = true
+	}
+
+	//Dynamically adding pwndoc modules
+	pwndocModuleNames := []string{"Access Key Age/Last Used", "Open S3 Buckets (Authenticated/Anonymous)", "IMDSv1", "Public RDS", "Unencrypted EBS Snapshots", "RDS Minor Version Upgrade (Informational)", "Root Account in Use"} // Example module names
+
+	for _, moduleName := range pwndocModuleNames {
+		m.PwndocModules[moduleName] = true
+	}
+
+	//Dynamically adding non pwndoc modules
+	nonPwndocModuleNames := []string{"cf-template-* S3/Cloudformation template injection", "Pull Lambda Source", "Pull Lambda Env Variables", "S3 List/Recon"} // Example module names
+
+	for _, moduleName := range nonPwndocModuleNames {
+		m.NonPwndocModules[moduleName] = true
+	}
+
+	//Dynamically adding guided check modules
+	guidedCheckModuleNames := []string{"SQS Queues", "IAM Stuff"} // Example module names
+
+	for _, moduleName := range guidedCheckModuleNames {
+		m.GuidedCheckModules[moduleName] = true
 	}
 
 	// Dynamically create text inputs based on the fields of ConfigVars
@@ -227,6 +266,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if !m.ModuleSelected {
 		return moduleSelection(msg, m)
+	}
+	if m.ModuleSelection["Pwndoc Checks"] {
+		m, cmd := m.updatePwndocChecks(msg)
+		return m, cmd
+	}
+	if m.ModuleSelection["Non Pwndoc Checks"] {
+		m, cmd := m.updateNonPwndocChecks(msg)
+		return m, cmd
+	}
+	if m.ModuleSelection["Guided Checks"] {
+		m, cmd := m.updateGuidedChecks(msg)
+		return m, cmd
 	} else {
 		return m, tea.Quit
 	}
@@ -255,9 +306,9 @@ func (m *model) updateConfiguration(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Update the model's configuration variables with the new values
 		m.ConfigVars = msg.ConfigVars
 
-		// Optionally, proceed to write the configuration to file or any other next step
+		//write the configuration to file or any other next step
 		return m, writeConfig(m)
-	// In your update function
+
 	case errMsg:
 		// Handle the error, maybe log it or display an error message in the UI
 		fmt.Println("Error writing config:", msg.Err)
@@ -338,8 +389,7 @@ func (m *model) updateConfiguration(msg tea.Msg) (tea.Model, tea.Cmd) {
 func moduleSelection(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
-	// Assuming you have an ordered list of module names
-	moduleNames := []string{"config", "configs", "poop", "stuff"} // Keep this synchronized with your map
+	moduleNames := []string{"Pwndoc Checks", "Non Pwndoc Checks", "Guided Checks"} // Keep this synchronized with map. Would like to have it populated dynamically.
 
 	// Handling key inputs
 	switch msg := msg.(type) {
@@ -360,14 +410,133 @@ func moduleSelection(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
 		case "enter":
 			// Confirm selections - This is where you would handle the next steps based on selections
 
-			m.ModuleSelected = true // Assuming you have a way to move forward with the selected modules
-			return m, nil           // or another Cmd that moves the app forward
+			m.ModuleSelected = true
+			return m, nil
 		case "q", "esc":
 			// Exit module selection
 			return m, tea.Quit
 		}
 
 		return m, nil // Ensure we return the updated model with no command to quit unless specified
+	}
+
+	return m, tea.Batch(cmds...)
+}
+
+func (m *model) updatePwndocChecks(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
+	// Assuming you have an ordered list of module names
+	moduleNames := []string{"Access Key Age/Last Used", "Open S3 Buckets (Authenticated/Anonymous)", "IMDSv1", "Public RDS", "Unencrypted EBS Snapshots", "RDS Minor Version Upgrade (Informational)", "Root Account in Use"} // Keep this synchronized with your map
+
+	// Handling key inputs
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "j", "down":
+			m.currentPwndocIndex = (m.currentPwndocIndex + 1) % len(moduleNames)
+		case "k", "up":
+			m.currentPwndocIndex = (m.currentPwndocIndex - 1 + len(moduleNames)) % len(moduleNames)
+		case " ":
+
+			// Toggle the selected state.
+			currentModuleName := moduleNames[m.currentPwndocIndex]
+			m.PwndocModules[currentModuleName] = !m.PwndocModules[currentModuleName]
+			// Explicitly request a re-render to ensure the view updates.
+			return m, nil
+
+		case "enter":
+			// Confirm selections - This is where you would handle the next steps based on selections
+
+			m.ModuleSelection["Pwndoc Checks"] = false
+			return m, nil
+		case "q", "esc":
+			// Exit module selection
+			return m, tea.Quit
+		}
+
+		return m, nil // Ensure we return the updated model with no command to quit unless specified
+
+	}
+
+	return m, tea.Batch(cmds...)
+}
+
+func (m *model) updateNonPwndocChecks(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
+	// Assuming you have an ordered list of module names
+	moduleNames := []string{"cf-template-* S3/Cloudformation template injection", "Pull Lambda Source", "Pull Lambda Env Variables", "S3 List/Recon"} // Keep this synchronized with your map
+
+	// Handling key inputs
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+
+		case "j", "down":
+			m.currentNonPwndocIndex = (m.currentNonPwndocIndex + 1) % len(moduleNames)
+		case "k", "up":
+			m.currentNonPwndocIndex = (m.currentNonPwndocIndex - 1 + len(moduleNames)) % len(moduleNames)
+		case " ":
+
+			// Toggle the selected state.
+			currentModuleName := moduleNames[m.currentNonPwndocIndex]
+			m.NonPwndocModules[currentModuleName] = !m.NonPwndocModules[currentModuleName]
+			// Explicitly request a re-render to ensure the view updates.
+			return m, nil
+
+		case "enter":
+			// Confirm selections - This is where you would handle the next steps based on selections
+
+			m.ModuleSelection["Non Pwndoc Checks"] = false
+			return m, nil
+		case "q", "esc":
+			// Exit module selection
+			return m, tea.Quit
+		}
+
+		return m, nil // Ensure we return the updated model with no command to quit unless specified
+
+	}
+
+	return m, tea.Batch(cmds...)
+}
+
+func (m *model) updateGuidedChecks(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
+	// Assuming you have an ordered list of module names
+	moduleNames := []string{"SQS Queues", "IAM Stuff"} // Keep this synchronized with your map
+
+	// Handling key inputs
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+
+		case "j", "down":
+			m.currentGuidedCheckIndex = (m.currentGuidedCheckIndex + 1) % len(moduleNames)
+		case "k", "up":
+			m.currentGuidedCheckIndex = (m.currentGuidedCheckIndex - 1 + len(moduleNames)) % len(moduleNames)
+		case " ":
+
+			// Toggle the selected state.
+			currentModuleName := moduleNames[m.currentGuidedCheckIndex]
+			m.GuidedCheckModules[currentModuleName] = !m.GuidedCheckModules[currentModuleName]
+			// Explicitly request a re-render to ensure the view updates.
+			return m, nil
+
+		case "enter":
+			// Confirm selections - This is where you would handle the next steps based on selections
+
+			m.ModuleSelection["Guided Checks"] = false
+			return m, nil
+		case "q", "esc":
+			// Exit module selection
+			return m, tea.Quit
+		}
+
+		return m, nil // Ensure we return the updated model with no command to quit unless specified
+
 	}
 
 	return m, tea.Batch(cmds...)
@@ -384,7 +553,16 @@ func (m model) View() string {
 		s = configurationView(m)
 	} else if !m.ModuleSelected {
 		s = moduleSelectionView(m)
+	} else if m.ModuleSelection["Pwndoc Checks"] {
+		s = pwndocChecksView(m)
+	} else if m.ModuleSelection["Non Pwndoc Checks"] {
+		s = nonPwndocChecksView(m)
+	} else if m.ModuleSelection["Guided Checks"] {
+		s = guidedChecksView(m)
+	} else {
+		s = "Press any key to exit"
 	}
+
 	return mainStyle.Render("\n" + s + "\n\n")
 }
 
@@ -417,7 +595,7 @@ func moduleSelectionView(m model) string {
 	var b strings.Builder
 	b.WriteString("This is the module selector view\n\n")
 
-	moduleNames := []string{"config", "configs", "poop", "stuff"} // This should match the list used for navigation
+	moduleNames := []string{"Pwndoc Checks", "Non Pwndoc Checks", "Guided Checks"} // This should match the list used for navigation
 
 	// Iterate through moduleNames to maintain order
 	for i, moduleName := range moduleNames {
@@ -436,14 +614,81 @@ func moduleSelectionView(m model) string {
 	return b.String()
 }
 
+func pwndocChecksView(m model) string {
+	var b strings.Builder
+	b.WriteString("This is the pwndoc checks view\n\n")
+
+	moduleNames := []string{"Access Key Age/Last Used", "Open S3 Buckets (Authenticated/Anonymous)", "IMDSv1", "Public RDS", "Unencrypted EBS Snapshots", "RDS Minor Version Upgrade (Informational)", "Root Account in Use"} // This should match the list used for navigation
+
+	// Iterate through moduleNames to maintain order
+	for i, moduleName := range moduleNames {
+		if i == m.currentPwndocIndex {
+			b.WriteString(highlightStyle.Render(checkbox(moduleName, m.PwndocModules[moduleName])) + "\n")
+		} else {
+			b.WriteString(checkbox(moduleName, m.PwndocModules[moduleName]) + "\n")
+		}
+	}
+
+	b.WriteString(subtleStyle.Render("\nj/k, up/down: select") + dotStyle +
+		subtleStyle.Render("space: toggle selection") + dotStyle +
+		subtleStyle.Render("enter: confirm selections") + dotStyle +
+		subtleStyle.Render("q, esc: quit"))
+
+	return b.String()
+}
+
+func nonPwndocChecksView(m model) string {
+	var b strings.Builder
+	b.WriteString("This is the non pwndoc checks view\n\n")
+
+	moduleNames := []string{"cf-template-* S3/Cloudformation template injection", "Pull Lambda Source", "Pull Lambda Env Variables", "S3 List/Recon"} // This should match the list used for navigation
+
+	// Iterate through moduleNames to maintain order
+	for i, moduleName := range moduleNames {
+		if i == m.currentNonPwndocIndex {
+			b.WriteString(highlightStyle.Render(checkbox(moduleName, m.NonPwndocModules[moduleName])) + "\n")
+		} else {
+			b.WriteString(checkbox(moduleName, m.NonPwndocModules[moduleName]) + "\n")
+		}
+	}
+
+	b.WriteString(subtleStyle.Render("\nj/k, up/down: select") + dotStyle +
+		subtleStyle.Render("space: toggle selection") + dotStyle +
+		subtleStyle.Render("enter: confirm selections") + dotStyle +
+		subtleStyle.Render("q, esc: quit"))
+
+	return b.String()
+}
+
+func guidedChecksView(m model) string {
+	var b strings.Builder
+	b.WriteString("This is the guided checks view\n\n")
+
+	moduleNames := []string{"SQS Queues", "IAM Stuff"} // This should match the list used for navigation
+
+	// Iterate through moduleNames to maintain order
+	for i, moduleName := range moduleNames {
+		if i == m.currentGuidedCheckIndex {
+			b.WriteString(highlightStyle.Render(checkbox(moduleName, m.GuidedCheckModules[moduleName])) + "\n")
+		} else {
+			b.WriteString(checkbox(moduleName, m.GuidedCheckModules[moduleName]) + "\n")
+		}
+	}
+
+	b.WriteString(subtleStyle.Render("\nj/k, up/down: select") + dotStyle +
+		subtleStyle.Render("space: toggle selection") + dotStyle +
+		subtleStyle.Render("enter: confirm selections") + dotStyle +
+		subtleStyle.Render("q, esc: quit"))
+
+	return b.String()
+}
+
 func checkbox(label string, checked bool) string {
 	if checked {
 		return checkboxStyle.Render("[x] " + label)
 	}
 	return fmt.Sprintf("[ ] %s", label)
 }
-
-// tea cmds
 
 // Update the text inputs
 func (m *model) updateInputs(msg tea.Msg) tea.Cmd {
@@ -472,7 +717,6 @@ func updateConfigVars(m *model) tea.Cmd {
 		}
 
 		// Return a message indicating the update is complete
-		// This part remains the same as your current implementation
 		return configUpdatedMsg{
 			ConfigVars: m.ConfigVars,
 		}
