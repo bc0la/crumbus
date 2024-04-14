@@ -9,9 +9,9 @@ import (
 	"os"
 	"reflect"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/bubbles/cursor"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -25,8 +25,28 @@ const (
 	dotChar           = " • "
 )
 
+var (
+// Available spinners
+
+)
+
 // General stuff for styling the view
 var (
+	// spinners = []spinner.Spinner{
+	// 	spinner.Line,
+	// 	spinner.Dot,
+	// 	spinner.MiniDot,
+	// 	spinner.Jump,
+	// 	spinner.Pulse,
+	// 	spinner.Points,
+	// 	spinner.Globe,
+	// 	spinner.Moon,
+	// 	spinner.Monkey,
+	// }
+
+	// textStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render
+	spinnerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("69"))
+
 	//checkbox styling
 	subtleStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	checkboxStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("212"))
@@ -46,16 +66,16 @@ var (
 	blurredButton = fmt.Sprintf("[ %s ]", blurredStyle.Render("Submit"))
 )
 
-type (
-	tickMsg struct{}
-	//frameMsg struct{}
-)
+// type (
+// 	tickMsg struct{}
+// 	//frameMsg struct{}
+// )
 
-func tick() tea.Cmd {
-	return tea.Tick(time.Second, func(time.Time) tea.Msg {
-		return tickMsg{}
-	})
-}
+// func tick() tea.Cmd {
+// 	return tea.Tick(time.Second, func(time.Time) tea.Msg {
+// 		return tickMsg{}
+// 	})
+// }
 
 // func frame() tea.Cmd {
 // 	return tea.Tick(time.Second/60, func(time.Time) tea.Msg {
@@ -106,7 +126,7 @@ type model struct {
 	Configured bool
 	// Are we reviewing submodules?
 	SubModulesReviewed bool
-
+	Executing          bool
 	// Config vars for config.json/tool configuration
 	ConfigVars struct {
 		PwndocUrl        string
@@ -121,6 +141,10 @@ type model struct {
 	focusIndex int
 	inputs     []textinput.Model
 	cursorMode cursor.Mode
+
+	//spinner
+	spinner spinner.Model
+	//index   int
 }
 
 type configWrittenMsg struct{}
@@ -162,6 +186,9 @@ func initialModel() model {
 		}
 	}
 
+	s := spinner.New()
+	s.Spinner = spinner.Line
+	s.Style = spinnerStyle
 	m := model{
 		Quitting:           false,
 		Module:             0,
@@ -170,35 +197,38 @@ func initialModel() model {
 		Configured:         false,
 		ModuleSelected:     false,
 		SubModulesReviewed: false,
+		Executing:          false,
 		ModuleSelection: []Module{
 			{Name: "Pwndoc Checks", Selected: true},
 			{Name: "Non Pwndoc Checks", Selected: true},
 			{Name: "Guided Checks", Selected: true},
 		},
 		PwndocModules: []Module{
-			{Name: "Access Key Age/Last Used", Selected: true},
-			{Name: "Open S3 Buckets (Authenticated/Anonymous)", Selected: true},
-			{Name: "IMDSv1", Selected: true},
-			{Name: "Public RDS", Selected: true},
-			{Name: "Unencrypted EBS Snapshots", Selected: true},
-			{Name: "RDS Minor Version Upgrade (Informational)", Selected: true},
-			{Name: "Root Account in Use", Selected: true},
+			{Name: "Access Key Age/Last Used", Selected: false},
+			{Name: "Open S3 Buckets (Authenticated/Anonymous)", Selected: false},
+			{Name: "IMDSv1", Selected: false},
+			{Name: "Public RDS", Selected: false},
+			{Name: "Unencrypted EBS Snapshots", Selected: false},
+			{Name: "RDS Minor Version Upgrade (Informational)", Selected: false},
+			{Name: "Root Account in Use", Selected: false},
 		},
 		NonPwndocModules: []Module{
-			{Name: "cf-template-* S3/Cloudformation template injection", Selected: true},
-			{Name: "Pull Lambda Source", Selected: true},
-			{Name: "Pull Lambda Env Variables", Selected: true},
-			{Name: "S3 List/Recon", Selected: true},
+			{Name: "cf-template-* S3/Cloudformation template injection", Selected: false},
+			{Name: "Pull Lambda Source", Selected: false},
+			{Name: "Pull Lambda Env Variables", Selected: false},
+			{Name: "S3 List/Recon", Selected: false},
 		},
 		GuidedCheckModules: []Module{
-			{Name: "SQS Queues", Selected: true},
-			{Name: "IAM Stuff", Selected: true},
+			{Name: "SQS Queues", Selected: false},
+			{Name: "IAM Stuff", Selected: false},
 		},
 
 		currentModuleIndex:      0,
 		currentPwndocIndex:      0,
 		currentNonPwndocIndex:   0,
 		currentGuidedCheckIndex: 0,
+
+		spinner: s,
 	}
 
 	// Dynamically create text inputs based on the fields of ConfigVars
@@ -239,7 +269,7 @@ func (m model) Init() tea.Cmd {
 		return textinput.Blink
 	}
 
-	return tick()
+	return m.spinner.Tick
 }
 
 // Main update function.
@@ -279,6 +309,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	} else if !m.SubModulesReviewed {
 		m, cmd := m.updateReviewSubModules(msg)
 		return m, cmd
+	} else if m.Executing {
+		m, cmd := m.updateExecuteChecks(msg)
+		return m, cmd
 	} else {
 		return m, tea.Quit
 	}
@@ -314,6 +347,13 @@ func (m *model) updateConfiguration(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle the error, maybe log it or display an error message in the UI
 		fmt.Println("Error writing config:", msg.Err)
 		return m, nil
+
+	case spinner.TickMsg:
+		if m.Executing {
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			return m, cmd
+		}
 	}
 
 	switch msg := msg.(type) {
@@ -409,6 +449,25 @@ func moduleSelection(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "enter":
 			// Confirm selections and possibly move to the next state
+			if m.ModuleSelection[0].Selected {
+				//set all pwndoc modules to selected
+				for i := range m.PwndocModules {
+					m.PwndocModules[i].Selected = true
+				}
+			}
+			if m.ModuleSelection[1].Selected {
+				//set all non pwndoc modules to selected
+				for i := range m.NonPwndocModules {
+					m.NonPwndocModules[i].Selected = true
+				}
+			}
+			if m.ModuleSelection[2].Selected {
+				//set all guided check modules to selected
+				for i := range m.GuidedCheckModules {
+					m.GuidedCheckModules[i].Selected = true
+				}
+			}
+
 			m.ModuleSelected = true
 			return m, nil
 		case "q", "esc":
@@ -437,11 +496,7 @@ func (m *model) updatePwndocChecks(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Toggle the selected state of the currently highlighted Pwndoc module
 			m.PwndocModules[m.currentPwndocIndex].Selected = !m.PwndocModules[m.currentPwndocIndex].Selected
 		case "enter":
-			// Possibly handle the confirmation of selections or move to next step
-			// This part needs customization based on how you want to handle after selections
-			// set ModuleSelection with name is Pwndoc Checks to false to move to next step
 			m.ModuleSelection[0].Selected = false
-
 			return m, nil
 		case "q", "esc":
 			// Exit the Pwndoc checks update
@@ -469,9 +524,6 @@ func (m *model) updateNonPwndocChecks(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Toggle the selected state of the currently highlighted Non Pwndoc module
 			m.NonPwndocModules[m.currentNonPwndocIndex].Selected = !m.NonPwndocModules[m.currentNonPwndocIndex].Selected
 		case "enter":
-			// Possibly handle the confirmation of selections or move to next step
-			// This part needs customization based on how you want to handle after selections
-			// set ModuleSelection with name is Non Pwndoc Checks to false to move to next step
 			m.ModuleSelection[1].Selected = false
 
 			return m, nil
@@ -500,9 +552,6 @@ func (m *model) updateGuidedChecks(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Toggle the selected state of the currently highlighted Guided module
 			m.GuidedCheckModules[m.currentGuidedCheckIndex].Selected = !m.GuidedCheckModules[m.currentGuidedCheckIndex].Selected
 		case "enter":
-			// Possibly handle the confirmation of selections or move to next step
-			// This part needs customization based on how you want to handle after selections
-			// set ModuleSelection with name is Guided Checks to false to move to next step
 			m.ModuleSelection[2].Selected = false
 
 			return m, nil
@@ -524,13 +573,26 @@ func (m *model) updateReviewSubModules(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 
 			m.SubModulesReviewed = true
-			return m, nil
+			m.Executing = true
+
+			return m, m.spinner.Tick
 		case "q", "esc":
 			// Exit
 			return m, tea.Quit
 		}
 	}
 
+	return m, nil
+}
+
+func (m *model) updateExecuteChecks(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+	}
+	// Handle other messages or commands specific to execution
 	return m, nil
 }
 
@@ -553,6 +615,8 @@ func (m model) View() string {
 		s = guidedChecksView(m)
 	} else if !m.SubModulesReviewed {
 		s = subModulesReviewView(m)
+	} else if m.Executing {
+		s = executionView(m)
 	} else {
 		s = "Press any key to exit"
 	}
@@ -701,6 +765,12 @@ func subModulesReviewView(m model) string {
 	b.WriteString(subtleStyle.Render("\nPress enter to confirm") + dotStyle +
 
 		subtleStyle.Render("q, esc to quit"))
+	return b.String()
+}
+
+func executionView(m model) string {
+	var b strings.Builder
+	b.WriteString("\n" + m.spinner.View() + " Executing, please wait...\n")
 	return b.String()
 }
 
