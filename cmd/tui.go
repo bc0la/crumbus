@@ -6,9 +6,11 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -83,6 +85,16 @@ var (
 // 	})
 // }
 
+type S3ProgressMsg struct {
+	ModuleName string
+	Checked    int
+	Total      int
+}
+
+type S3CompleteMsg struct {
+	ModuleName string
+}
+
 type configUpdatedMsg struct {
 	ConfigVars struct {
 		PwndocUrl        string
@@ -98,9 +110,16 @@ type configUpdatedMsg struct {
 type Module struct {
 	Name     string
 	Selected bool
+	Checked  int
+	Total    int
+	Complete bool
 }
 
 type model struct {
+	// may be better to initialize this later
+	s3ProgressChan chan S3ProgressMsg
+	s3DoneChan     chan S3CompleteMsg
+
 	// are we quitting?
 	Quitting bool
 	// int for module selection, need to rename
@@ -145,6 +164,8 @@ type model struct {
 	//spinner
 	spinner spinner.Model
 	//index   int
+
+	allDone bool
 }
 
 type configWrittenMsg struct{}
@@ -190,6 +211,9 @@ func initialModel() model {
 	s.Spinner = spinner.Line
 	s.Style = spinnerStyle
 	m := model{
+		s3ProgressChan: make(chan S3ProgressMsg),
+		s3DoneChan:     make(chan S3CompleteMsg),
+
 		Quitting:           false,
 		Module:             0,
 		ConfigVars:         configVars,
@@ -205,7 +229,7 @@ func initialModel() model {
 		},
 		PwndocModules: []Module{
 			{Name: "Access Key Age/Last Used", Selected: false},
-			{Name: "Open S3 Buckets (Authenticated/Anonymous)", Selected: false},
+			{Name: "Open S3 Buckets (Authenticated/Anonymous)", Selected: false, Checked: 0, Total: 0},
 			{Name: "IMDSv1", Selected: false},
 			{Name: "Public RDS", Selected: false},
 			{Name: "Unencrypted EBS Snapshots", Selected: false},
@@ -229,6 +253,7 @@ func initialModel() model {
 		currentGuidedCheckIndex: 0,
 
 		spinner: s,
+		allDone: false,
 	}
 
 	// Dynamically create text inputs based on the fields of ConfigVars
@@ -265,11 +290,11 @@ func startTui() {
 }
 
 func (m model) Init() tea.Cmd {
-	if !m.Configured {
-		return textinput.Blink
-	}
+	// if !m.Configured {
+	// 	return textinput.Blink
+	// }
 
-	return m.spinner.Tick
+	return tea.Batch(m.spinner.Tick, textinput.Blink, s3ProgressListen(m.s3ProgressChan), s3DoneListen(m.s3DoneChan))
 }
 
 // Main update function.
@@ -575,7 +600,7 @@ func (m *model) updateReviewSubModules(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.SubModulesReviewed = true
 			m.Executing = true
 
-			return m, m.spinner.Tick
+			return m, tea.Batch(m.spinner.Tick, OpenS3(m.PwndocModules[1].Name, m.s3ProgressChan, m.s3DoneChan))
 		case "q", "esc":
 			// Exit
 			return m, tea.Quit
@@ -586,11 +611,52 @@ func (m *model) updateReviewSubModules(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) updateExecuteChecks(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// f, err := os.OpenFile("s3progress.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	// defer f.Close()
+
+	// if _, err := f.Write([]byte("In Execute")); err != nil {
+	// 	log.Fatal(err)
+	// }
 	switch msg := msg.(type) {
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
+	}
+
+	switch msg := msg.(type) {
+	case S3ProgressMsg:
+		//log to file that msg was received
+		f, err := os.OpenFile("s3progress.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer f.Close()
+
+		if _, err := f.Write([]byte("Received Progress message\n")); err != nil {
+			log.Fatal(err)
+		}
+
+		for i, mod := range m.PwndocModules {
+			if mod.Name == msg.ModuleName {
+				m.PwndocModules[i].Checked = msg.Checked
+				m.PwndocModules[i].Total = msg.Total
+			}
+		}
+		return m, s3ProgressListen(m.s3ProgressChan)
+	case S3CompleteMsg:
+		for i, mod := range m.PwndocModules {
+			if mod.Name == msg.ModuleName {
+				m.PwndocModules[i].Complete = true
+
+				// will need to make a loop that goes over all active modules eventually
+				m.allDone = true
+			}
+		}
+		return m, s3DoneListen(m.s3DoneChan)
 	}
 	// Handle other messages or commands specific to execution
 	return m, nil
@@ -770,7 +836,25 @@ func subModulesReviewView(m model) string {
 
 func executionView(m model) string {
 	var b strings.Builder
-	b.WriteString("\n" + m.spinner.View() + " Executing, please wait...\n")
+
+	if !m.allDone {
+		b.WriteString("\n" + m.spinner.View() + " Executing, please wait...\n\n")
+	} else {
+		b.WriteString("\n✅ Execution complete\n\n")
+	}
+
+	// display progress checked/total for S3 checks
+	for _, mod := range m.PwndocModules {
+
+		if mod.Name == "Open S3 Buckets (Authenticated/Anonymous)" && !mod.Complete {
+			b.WriteString(m.spinner.View() + fmt.Sprintf(" %s: %d/%d", mod.Name, mod.Checked, mod.Total))
+		} else if mod.Name == "Open S3 Buckets (Authenticated/Anonymous)" && mod.Complete {
+			b.WriteString(fmt.Sprintf("✅ %s: Complete", mod.Name))
+			// find a better way to do this
+
+		}
+	}
+
 	return b.String()
 }
 
@@ -811,6 +895,56 @@ func updateConfigVars(m *model) tea.Cmd {
 		return configUpdatedMsg{
 			ConfigVars: m.ConfigVars,
 		}
+	}
+}
+
+// try moving this to another file
+func OpenS3(moduleName string, s3ProgressChan chan S3ProgressMsg, s3DoneChan chan<- S3CompleteMsg) tea.Cmd {
+	return func() tea.Msg {
+		totalBuckets := 4 // Dummy value for total buckets
+		for i := 1; i <= totalBuckets; i++ {
+			time.Sleep(time.Second) // Simulate delay
+			//println("Checking bucket", i, "in module", moduleName)
+			f, err := os.OpenFile("s3progress.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer f.Close()
+
+			if _, err := f.Write([]byte("Sending Progress message: " + fmt.Sprint(i) + "\n")); err != nil {
+				log.Fatal(err)
+			}
+
+			s3ProgressChan <- S3ProgressMsg{ModuleName: moduleName, Checked: i, Total: totalBuckets}
+
+			if _, err := f.Write([]byte("Sent Progress message: " + fmt.Sprint(i) + "\n")); err != nil {
+				log.Fatal(err)
+			}
+		}
+		s3DoneChan <- S3CompleteMsg{ModuleName: moduleName}
+		return nil
+	}
+}
+
+func s3ProgressListen(s3ProgressChan chan S3ProgressMsg) tea.Cmd {
+	return func() tea.Msg {
+		f, err := os.OpenFile("s3progress.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer f.Close()
+
+		if _, err := f.Write([]byte("Listening for progress\n")); err != nil {
+			log.Fatal(err)
+		}
+
+		return S3ProgressMsg(<-s3ProgressChan)
+	}
+}
+
+func s3DoneListen(s3DoneChan chan S3CompleteMsg) tea.Cmd {
+	return func() tea.Msg {
+		return S3CompleteMsg(<-s3DoneChan)
 	}
 }
 
