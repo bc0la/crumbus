@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/lucasb-eyer/go-colorful"
 	"github.com/spf13/cobra"
 )
 
@@ -64,14 +67,18 @@ var (
 	cursorModeHelpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	highlightStyle      = lipgloss.NewStyle().Background(lipgloss.Color("205"))
 
+	// progress bar styling
+	progressEmpty = subtleStyle.Render(progressEmptyChar)
+	// Gradient colors we'll use for the progress bar
+	ramp = makeRampStyles("#B14FFF", "#00FFA3", progressBarWidth)
+
 	focusedButton = focusedStyle.Copy().Render("[ Submit ]")
 	blurredButton = fmt.Sprintf("[ %s ]", blurredStyle.Render("Submit"))
 )
 
-// type (
-// 	tickMsg struct{}
-// 	//frameMsg struct{}
-// )
+type (
+	frameMsg struct{}
+)
 
 // func tick() tea.Cmd {
 // 	return tea.Tick(time.Second, func(time.Time) tea.Msg {
@@ -79,16 +86,17 @@ var (
 // 	})
 // }
 
-// func frame() tea.Cmd {
-// 	return tea.Tick(time.Second/60, func(time.Time) tea.Msg {
-// 		return frameMsg{}
-// 	})
-// }
+func frame() tea.Cmd {
+	return tea.Tick(time.Second/60, func(time.Time) tea.Msg {
+		return frameMsg{}
+	})
+}
 
 type S3ProgressMsg struct {
-	ModuleName string
-	Checked    int
-	Total      int
+	ModuleName    string
+	Checked       int
+	Total         int
+	StatusMessage string
 }
 
 type S3CompleteMsg struct {
@@ -108,11 +116,12 @@ type configUpdatedMsg struct {
 }
 
 type Module struct {
-	Name     string
-	Selected bool
-	Checked  int
-	Total    int
-	Complete bool
+	Name          string
+	Selected      bool
+	Checked       int
+	Total         int
+	Complete      bool
+	StatusMessage string
 }
 
 type model struct {
@@ -164,7 +173,13 @@ type model struct {
 	//spinner
 	spinner spinner.Model
 	//index   int
+	Ticks       int
+	Frames      int
+	Progress    float64
+	TotalChecks int
+	TotalDone   int
 
+	Loaded  bool
 	allDone bool
 }
 
@@ -252,6 +267,17 @@ func initialModel() model {
 		currentNonPwndocIndex:   0,
 		currentGuidedCheckIndex: 0,
 
+		focusIndex: 0,
+		cursorMode: cursor.CursorBlink,
+		// Progress bar stuff
+		Ticks:    0,
+		Frames:   0,
+		Progress: 0,
+		Loaded:   false,
+
+		TotalChecks: 0,
+		TotalDone:   0,
+
 		spinner: s,
 		allDone: false,
 	}
@@ -294,7 +320,7 @@ func (m model) Init() tea.Cmd {
 	// 	return textinput.Blink
 	// }
 
-	return tea.Batch(m.spinner.Tick, textinput.Blink, s3ProgressListen(m.s3ProgressChan), s3DoneListen(m.s3DoneChan))
+	return tea.Batch(m.spinner.Tick, textinput.Blink, s3ProgressListen(m.s3ProgressChan), s3DoneListen(m.s3DoneChan), frame())
 }
 
 // Main update function.
@@ -600,7 +626,7 @@ func (m *model) updateReviewSubModules(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.SubModulesReviewed = true
 			m.Executing = true
 
-			return m, tea.Batch(m.spinner.Tick, OpenS3(m.PwndocModules[1].Name, m.s3ProgressChan, m.s3DoneChan))
+			return m, tea.Batch(m.spinner.Tick, OpenS3(m.PwndocModules[1].Name, m.s3ProgressChan, m.s3DoneChan), frame())
 		case "q", "esc":
 			// Exit
 			return m, tea.Quit
@@ -611,6 +637,7 @@ func (m *model) updateReviewSubModules(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) updateExecuteChecks(msg tea.Msg) (tea.Model, tea.Cmd) {
+	const animationSpeed = 0.10
 	// f, err := os.OpenFile("s3progress.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	// if err != nil {
 	// 	log.Fatal(err)
@@ -630,23 +657,56 @@ func (m *model) updateExecuteChecks(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case S3ProgressMsg:
 		//log to file that msg was received
-		f, err := os.OpenFile("s3progress.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer f.Close()
+		// f, err := os.OpenFile("s3progress.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		// if err != nil {
+		// 	log.Fatal(err)
+		// }
+		// defer f.Close()
 
-		if _, err := f.Write([]byte("Received Progress message\n")); err != nil {
-			log.Fatal(err)
-		}
-
+		// if _, err := f.Write([]byte("Received Progress message\n")); err != nil {
+		// 	log.Fatal(err)
+		// }
+		m.TotalChecks = 0
+		m.TotalDone = 0
 		for i, mod := range m.PwndocModules {
 			if mod.Name == msg.ModuleName {
 				m.PwndocModules[i].Checked = msg.Checked
 				m.PwndocModules[i].Total = msg.Total
+				m.PwndocModules[i].StatusMessage = msg.StatusMessage
+				m.TotalChecks += msg.Total
+				m.TotalDone += msg.Checked
 			}
+
 		}
+
 		return m, s3ProgressListen(m.s3ProgressChan)
+	case frameMsg:
+		if !m.Loaded {
+			targetProgress := float64(m.TotalDone) / float64(m.TotalChecks)
+
+			// Check if current progress is less than the target, if so animate it
+			if m.Progress < targetProgress {
+				// Interpolate between current progress and target progress
+				m.Progress += (targetProgress - m.Progress) * animationSpeed
+
+				// Check if the progress is close enough to the target to consider it complete
+				if math.Abs(m.Progress-targetProgress) < 0.01 {
+					m.Progress = targetProgress // Snap to final value to avoid floating-point precision issues
+				}
+
+				return m, frame() // Continue animating
+			}
+
+			// Once we reach or exceed the target progress, we consider the loading complete
+			if m.Progress >= 1 {
+				m.Progress = 1
+				m.Loaded = true
+				return m, nil // Stop the animation
+			}
+
+			return m, frame()
+		}
+
 	case S3CompleteMsg:
 		for i, mod := range m.PwndocModules {
 			if mod.Name == msg.ModuleName {
@@ -843,17 +903,49 @@ func executionView(m model) string {
 		b.WriteString("\n✅ Execution complete\n\n")
 	}
 
-	// display progress checked/total for S3 checks
+	// display progress checked/total for Pwndoc checks
+	//if m.ModuleSelection[0].Selected {
+	b.WriteString("Pwndoc Checks:\n")
 	for _, mod := range m.PwndocModules {
 
-		if mod.Name == "Open S3 Buckets (Authenticated/Anonymous)" && !mod.Complete {
-			b.WriteString(m.spinner.View() + fmt.Sprintf(" %s: %d/%d", mod.Name, mod.Checked, mod.Total))
-		} else if mod.Name == "Open S3 Buckets (Authenticated/Anonymous)" && mod.Complete {
-			b.WriteString(fmt.Sprintf("✅ %s: Complete", mod.Name))
+		if mod.Selected && !mod.Complete {
+			b.WriteString(m.spinner.View() + fmt.Sprintf(" %s: %d/%d - %s", mod.Name, mod.Checked, mod.Total, mod.StatusMessage) + "\n")
+		} else if mod.Selected && mod.Complete {
+			b.WriteString(fmt.Sprintf("✅ %s: Complete", mod.Name) + "\n")
 			// find a better way to do this
+		}
 
+	}
+	//}
+
+	// display progress checked/total for Non Pwndoc checks
+	//if m.ModuleSelection[1].Selected {
+	b.WriteString("\nNon Pwndoc Checks:\n")
+	for _, mod := range m.NonPwndocModules {
+		if mod.Selected && !mod.Complete {
+			b.WriteString(m.spinner.View() + fmt.Sprintf(" %s: %d/%d", mod.Name, mod.Checked, mod.Total) + "\n")
+		} else if mod.Selected && mod.Complete {
+			b.WriteString(fmt.Sprintf("✅ %s: Complete", mod.Name) + "\n")
 		}
 	}
+	//}
+
+	// display progress checked/total for Guided checks
+	//if m.ModuleSelection[2].Selected {
+	b.WriteString("\nGuided Checks:\n")
+	for _, mod := range m.GuidedCheckModules {
+		if mod.Selected && !mod.Complete {
+			b.WriteString(m.spinner.View() + fmt.Sprintf(" %s: %d/%d", mod.Name, mod.Checked, mod.Total) + "\n")
+		} else if mod.Selected && mod.Complete {
+			b.WriteString(fmt.Sprintf("✅ %s: Complete", mod.Name) + "\n")
+		}
+	}
+	//}
+
+	b.WriteString(fmt.Sprintf("Total: %d/%d", m.TotalDone, m.TotalChecks))
+	b.WriteString("\n\n")
+	b.WriteString(progressbar(m.Progress) + "\n\n")
+	b.WriteString(subtleStyle.Render("Press q or esc to quit"))
 
 	return b.String()
 }
@@ -902,7 +994,12 @@ func updateConfigVars(m *model) tea.Cmd {
 func OpenS3(moduleName string, s3ProgressChan chan S3ProgressMsg, s3DoneChan chan<- S3CompleteMsg) tea.Cmd {
 	return func() tea.Msg {
 		totalBuckets := 4 // Dummy value for total buckets
+		bucketName := []string{"bucket1", "bucket2", "bucket3", "bucket4"}
+		s3ProgressChan <- S3ProgressMsg{ModuleName: moduleName, Checked: 0, Total: totalBuckets, StatusMessage: "Starting S3 checks"}
+		time.Sleep(time.Second) // Simulate delay
 		for i := 1; i <= totalBuckets; i++ {
+
+			s3ProgressChan <- S3ProgressMsg{ModuleName: moduleName, Checked: i, Total: totalBuckets, StatusMessage: "Checking bucket: " + bucketName[i-1]}
 			time.Sleep(time.Second) // Simulate delay
 			//println("Checking bucket", i, "in module", moduleName)
 			f, err := os.OpenFile("s3progress.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -914,8 +1011,6 @@ func OpenS3(moduleName string, s3ProgressChan chan S3ProgressMsg, s3DoneChan cha
 			if _, err := f.Write([]byte("Sending Progress message: " + fmt.Sprint(i) + "\n")); err != nil {
 				log.Fatal(err)
 			}
-
-			s3ProgressChan <- S3ProgressMsg{ModuleName: moduleName, Checked: i, Total: totalBuckets}
 
 			if _, err := f.Write([]byte("Sent Progress message: " + fmt.Sprint(i) + "\n")); err != nil {
 				log.Fatal(err)
@@ -966,6 +1061,46 @@ func writeConfig(m *model) tea.Cmd {
 }
 
 // Utils
+func progressbar(percent float64) string {
+	w := float64(progressBarWidth)
+
+	fullSize := int(math.Round(w * percent))
+	var fullCells string
+	for i := 0; i < fullSize; i++ {
+		fullCells += ramp[i].Render(progressFullChar)
+	}
+
+	emptySize := int(w) - fullSize
+	emptyCells := strings.Repeat(progressEmpty, emptySize)
+
+	return fmt.Sprintf("%s%s %3.0f", fullCells, emptyCells, math.Round(percent*100))
+}
+
+func makeRampStyles(colorA, colorB string, steps float64) (s []lipgloss.Style) {
+	cA, _ := colorful.Hex(colorA)
+	cB, _ := colorful.Hex(colorB)
+
+	for i := 0.0; i < steps; i++ {
+		c := cA.BlendLuv(cB, i/steps)
+		s = append(s, lipgloss.NewStyle().Foreground(lipgloss.Color(colorToHex(c))))
+	}
+	return
+}
+
+// Convert a colorful.Color to a hexadecimal format.
+func colorToHex(c colorful.Color) string {
+	return fmt.Sprintf("#%s%s%s", colorFloatToHex(c.R), colorFloatToHex(c.G), colorFloatToHex(c.B))
+}
+
+// Helper function for converting colors to hex. Assumes a value between 0 and
+// 1.
+func colorFloatToHex(f float64) (s string) {
+	s = strconv.FormatInt(int64(f*255), 16)
+	if len(s) == 1 {
+		s = "0" + s
+	}
+	return
+}
 
 // tuiCmd represents the tui command
 var tuiCmd = &cobra.Command{
