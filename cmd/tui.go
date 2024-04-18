@@ -73,8 +73,9 @@ var (
 	// Gradient colors we'll use for the progress bar
 	ramp = makeRampStyles("#B14FFF", "#00FFA3", progressBarWidth)
 	//gradient colors for ascii art, last value is length of ascii art plus message)
-	asciiramp = makeRampStyles("#B14FFF", "#00FFA3", 427)
-
+	//asciiramp = makeRampStyles("#B14FFF", "#00FFA3", 427)
+	asciiramp     = makeRampStyles("#B14FFF", "#00FFA3", 181)
+	sloganramp    = makeRampStyles("#B14FFF", "#00FFA3", 61)
 	focusedButton = focusedStyle.Copy().Render("[ Submit ]")
 	blurredButton = fmt.Sprintf("[ %s ]", blurredStyle.Render("Submit"))
 )
@@ -881,7 +882,7 @@ func moduleSelectionView(m model) string {
 	selectedSlogan := centerString(slogans[rand.Intn(len(slogans))], 61)
 
 	// Append the slogan to the ASCII art
-	asciiArt = append(asciiArt, "", selectedSlogan)
+	//asciiArt = append(asciiArt, "", selectedSlogan)
 
 	// Assume ramp is initialized properly elsewhere in your code
 	for _, line := range asciiArt {
@@ -890,6 +891,10 @@ func moduleSelectionView(m model) string {
 			b.WriteString(style.Render(string(char)))
 		}
 		b.WriteString("\n") // Newline after each line of ASCII art
+	}
+	for i, char := range selectedSlogan {
+		style := sloganramp[i%len(sloganramp)] // Use modulo to cycle through ramp
+		b.WriteString(style.Render(string(char)))
 	}
 
 	b.WriteString(subtleStyle.Render("\nUse j/k or up/down to navigate") + dotStyle +
