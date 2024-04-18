@@ -70,7 +70,8 @@ var (
 	// progress bar styling
 	progressEmpty = subtleStyle.Render(progressEmptyChar)
 	// Gradient colors we'll use for the progress bar
-	ramp = makeRampStyles("#B14FFF", "#00FFA3", progressBarWidth)
+	ramp      = makeRampStyles("#B14FFF", "#00FFA3", progressBarWidth)
+	asciiramp = makeRampStyles("#B14FFF", "#00FFA3", 366)
 
 	focusedButton = focusedStyle.Copy().Render("[ Submit ]")
 	blurredButton = fmt.Sprintf("[ %s ]", blurredStyle.Render("Submit"))
@@ -790,7 +791,25 @@ func moduleSelectionView(m model) string {
 		}
 		b.WriteString(line + "\n")
 	}
+	b.WriteString("\n\n")
+	asciiArt := []string{
+		"░█████╗░██████╗░██╗░░░██╗███╗░░░███╗██████╗░██╗░░░██╗░██████╗",
+		"██╔══██╗██╔══██╗██║░░░██║████╗░████║██╔══██╗██║░░░██║██╔════╝",
+		"██║░░╚═╝██████╔╝██║░░░██║██╔████╔██║██████╦╝██║░░░██║╚█████╗░",
+		"██║░░██╗██╔══██╗██║░░░██║██║╚██╔╝██║██╔══██╗██║░░░██║░╚═══██╗",
+		"╚█████╔╝██║░░██║╚██████╔╝██║░╚═╝░██║██████╦╝╚██████╔╝██████╔╝",
+		"░╚════╝░╚═╝░░╚═╝░╚═════╝░╚═╝░░░░░╚═╝╚═════╝░░╚═════╝░╚═════╝░",
+	}
 
+	// Assume ramp is initialized properly elsewhere in your code
+	for _, line := range asciiArt {
+		for i, char := range line {
+			style := asciiramp[i%len(asciiramp)] // Use modulo to cycle through ramp
+			b.WriteString(style.Render(string(char)))
+		}
+		b.WriteString("\n") // Newline after each line of ASCII art
+	}
+	b.WriteString("\n\n")
 	b.WriteString(subtleStyle.Render("\nUse j/k or up/down to navigate") + dotStyle +
 		subtleStyle.Render("space to toggle selection") + dotStyle +
 		subtleStyle.Render("enter to confirm") + dotStyle +
