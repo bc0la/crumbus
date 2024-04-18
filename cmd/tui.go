@@ -897,7 +897,7 @@ func moduleSelectionView(m model) string {
 		b.WriteString(style.Render(string(char)))
 	}
 
-	b.WriteString(subtleStyle.Render("\nUse j/k or up/down to navigate") + dotStyle +
+	b.WriteString(subtleStyle.Render("\n\nUse j/k or up/down to navigate") + dotStyle +
 		subtleStyle.Render("space to toggle selection") + dotStyle +
 		subtleStyle.Render("enter to confirm") + dotStyle +
 		subtleStyle.Render("esc to quit"))
