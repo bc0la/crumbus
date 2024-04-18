@@ -891,7 +891,7 @@ func moduleSelectionView(m model) string {
 		}
 		b.WriteString("\n") // Newline after each line of ASCII art
 	}
-	b.WriteString("\n\n")
+
 	b.WriteString(subtleStyle.Render("\nUse j/k or up/down to navigate") + dotStyle +
 		subtleStyle.Render("space to toggle selection") + dotStyle +
 		subtleStyle.Render("enter to confirm") + dotStyle +
