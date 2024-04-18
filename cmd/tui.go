@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"math/rand"
 	"os"
 	"reflect"
 	"strconv"
@@ -71,7 +72,7 @@ var (
 	progressEmpty = subtleStyle.Render(progressEmptyChar)
 	// Gradient colors we'll use for the progress bar
 	ramp      = makeRampStyles("#B14FFF", "#00FFA3", progressBarWidth)
-	asciiramp = makeRampStyles("#B14FFF", "#00FFA3", 366)
+	asciiramp = makeRampStyles("#B14FFF", "#00FFA3", 427)
 
 	focusedButton = focusedStyle.Copy().Render("[ Submit ]")
 	blurredButton = fmt.Sprintf("[ %s ]", blurredStyle.Render("Submit"))
@@ -88,7 +89,7 @@ type (
 // }
 
 func frame() tea.Cmd {
-	return tea.Tick(time.Second/60, func(time.Time) tea.Msg {
+	return tea.Tick(time.Second/120, func(time.Time) tea.Msg {
 		return frameMsg{}
 	})
 }
@@ -627,6 +628,7 @@ func (m *model) updateReviewSubModules(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.SubModulesReviewed = true
 			m.Executing = true
 
+			// cmds will need to be stored in a variable, and add logid to tell whether or not to apend a command
 			return m, tea.Batch(m.spinner.Tick, OpenS3(m.PwndocModules[1].Name, m.s3ProgressChan, m.s3DoneChan), frame())
 		case "q", "esc":
 			// Exit
@@ -638,7 +640,7 @@ func (m *model) updateReviewSubModules(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) updateExecuteChecks(msg tea.Msg) (tea.Model, tea.Cmd) {
-	const animationSpeed = 0.10
+	const animationSpeed = 0.20
 	// f, err := os.OpenFile("s3progress.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	// if err != nil {
 	// 	log.Fatal(err)
@@ -800,6 +802,51 @@ func moduleSelectionView(m model) string {
 		"╚█████╔╝██║░░██║╚██████╔╝██║░╚═╝░██║██████╦╝╚██████╔╝██████╔╝",
 		"░╚════╝░╚═╝░░╚═╝░╚═════╝░╚═╝░░░░░╚═╝╚═════╝░░╚═════╝░╚═════╝░",
 	}
+	// Append randomly selected message to asciiArt
+	slogans := []string{
+		"Crumbus: Because Reality Needed a Reboot!",
+		"Unravel the Fabric of Usual, Stitch by Crumbus!",
+		"Hop on the Crumbus, Where Directions Don't Matter!",
+		"Squeeze More Out of Nowhere with Crumbus!",
+		"Whistle While You Work, Dance While You Crumbus!",
+		"Turn Left at Tomorrow, You're on Crumbus Time!",
+		"From Nonsense to Sense, All Aboard the Crumbus Express!",
+		"Crumbus: Where the Ordinary Meets the Bread Crumbs.",
+		"Dive into the Dough of Innovation with Crumbus!",
+		"Crumbus: Because Reality Was Too Mainstream.",
+		"Sprinkle a Little Crumbus on Your Day!",
+		"Unleash the Whimsy – Crumbus is Here!",
+		"Crumbus: Baking Your Ideas to Perfection.",
+		"Twist, Toss, Crumble – That's the Crumbus Way!",
+		"Keep Crumbing Along with Crumbus!",
+		"Catch the Crumbs of Creativity with Crumbus.",
+		"Crumbus: A Sprinkle of Nonsense in Every Byte.",
+		"Crumbus: Orbiting the Bagel of Possibility!",
+		"Flip the Pancake Skyward with Crumbus!",
+		"Buckle Your Shoe, Click Your Pen, Launch Crumbus!",
+		"Echoes of Crumbus, in a Whispering Cheese Wheel!",
+		"Juggle the Moon, Spin the Sun, It's Crumbus Time!",
+		"Dance with Shadows, Paint with Wind, Crumbus Awaits!",
+		"Crumbus: Knitting Clouds into Cozy Thoughts!",
+		"Marmalade Skies and Pickle Rain, Only in Crumbus!",
+		"Gallop Through Puddles of Time with Crumbus!",
+		"Crumbus: Blending Echoes with Shades of Silence!",
+		"Chase the Invisible Butterflies, Discover Crumbus!",
+		"Sailing on a Sea of Glitter, It's Crumbus Weather!",
+		"Unfold the Map of Imaginary Lands with Crumbus!",
+		"Twist the Dial, Tune into the Crumbus Frequency!",
+		"Leap Over Mountains of Marshmallow with Crumbus!",
+		"Harness the Power of Neon Carrots, Power Up Crumbus!",
+		"Crumbus: Surfing the Cosmic Milkshake Waves!",
+		"Stitch Time with Yarns of Stardust, Courtesy of Crumbus!",
+		"Doodle Your Dreams in the Margins of Crumbus!",
+		"Crumbus: Brewing a Pot of Invisible Tea!",
+	}
+	// Randomly select a slogan
+	selectedSlogan := centerString(slogans[rand.Intn(len(slogans))], 61)
+
+	// Append the slogan to the ASCII art
+	asciiArt = append(asciiArt, "", selectedSlogan)
 
 	// Assume ramp is initialized properly elsewhere in your code
 	for _, line := range asciiArt {
@@ -917,9 +964,9 @@ func executionView(m model) string {
 	var b strings.Builder
 
 	if !m.allDone {
-		b.WriteString("\n" + m.spinner.View() + " Executing, please wait...\n\n")
+		b.WriteString("\n" + m.spinner.View() + " Crumbusing please wait...\n\n")
 	} else {
-		b.WriteString("\n✅ Execution complete\n\n")
+		b.WriteString("\n✅ Crumbus complete\n\n")
 	}
 
 	// display progress checked/total for Pwndoc checks
@@ -1119,6 +1166,12 @@ func colorFloatToHex(f float64) (s string) {
 		s = "0" + s
 	}
 	return
+}
+func centerString(text string, width int) string {
+	padding := width - len(text)
+	leftPad := padding / 2
+	rightPad := padding - leftPad
+	return strings.Repeat(" ", leftPad) + text + strings.Repeat(" ", rightPad)
 }
 
 // tuiCmd represents the tui command
