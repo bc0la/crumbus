@@ -731,6 +731,7 @@ func (m *model) updateExecuteChecks(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pwndocAllDone = false
 			}
 		}
+		// will need to make loops for other modules and if all are complete, set all done to true. re-add alldone to view
 
 		m.pwndocAllDone = true
 		return m, s3DoneListen(m.s3DoneChan)
