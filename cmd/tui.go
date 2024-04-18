@@ -71,7 +71,8 @@ var (
 	// progress bar styling
 	progressEmpty = subtleStyle.Render(progressEmptyChar)
 	// Gradient colors we'll use for the progress bar
-	ramp      = makeRampStyles("#B14FFF", "#00FFA3", progressBarWidth)
+	ramp = makeRampStyles("#B14FFF", "#00FFA3", progressBarWidth)
+	//gradient colors for ascii art, last value is length of ascii art plus message)
 	asciiramp = makeRampStyles("#B14FFF", "#00FFA3", 427)
 
 	focusedButton = focusedStyle.Copy().Render("[ Submit ]")
@@ -135,6 +136,7 @@ type model struct {
 	Quitting bool
 	// int for module selection, need to rename
 	Module int
+
 	// ModuleSelection map
 	ModuleSelection    []Module
 	currentModuleIndex int
@@ -181,8 +183,8 @@ type model struct {
 	TotalChecks int
 	TotalDone   int
 
-	Loaded  bool
-	allDone bool
+	Loaded        bool
+	pwndocAllDone bool
 }
 
 type configWrittenMsg struct{}
@@ -239,29 +241,30 @@ func initialModel() model {
 		ModuleSelected:     false,
 		SubModulesReviewed: false,
 		Executing:          false,
+		// using complete to true at the start for non implemented modules
 		ModuleSelection: []Module{
-			{Name: "Pwndoc Checks", Selected: true},
-			{Name: "Non Pwndoc Checks", Selected: true},
-			{Name: "Guided Checks", Selected: true},
+			{Name: "Pwndoc Checks", Selected: true, Complete: false},
+			{Name: "Non Pwndoc Checks", Selected: true, Complete: false},
+			{Name: "Guided Checks", Selected: true, Complete: false},
 		},
 		PwndocModules: []Module{
-			{Name: "Access Key Age/Last Used", Selected: false},
-			{Name: "Open S3 Buckets (Authenticated/Anonymous)", Selected: false, Checked: 0, Total: 0},
-			{Name: "IMDSv1", Selected: false},
-			{Name: "Public RDS", Selected: false},
-			{Name: "Unencrypted EBS Snapshots", Selected: false},
-			{Name: "RDS Minor Version Upgrade (Informational)", Selected: false},
-			{Name: "Root Account in Use", Selected: false},
+			{Name: "Access Key Age/Last Used", Selected: false, Complete: true},
+			{Name: "Open S3 Buckets (Authenticated/Anonymous)", Selected: false, Checked: 0, Total: 0, Complete: false},
+			{Name: "IMDSv1", Selected: false, Complete: true},
+			{Name: "Public RDS", Selected: false, Complete: true},
+			{Name: "Unencrypted EBS Snapshots", Selected: false, Complete: true},
+			{Name: "RDS Minor Version Upgrade (Informational)", Selected: false, Complete: true},
+			{Name: "Root Account in Use", Selected: false, Complete: true},
 		},
 		NonPwndocModules: []Module{
-			{Name: "cf-template-* S3/Cloudformation template injection", Selected: false},
-			{Name: "Pull Lambda Source", Selected: false},
-			{Name: "Pull Lambda Env Variables", Selected: false},
-			{Name: "S3 List/Recon", Selected: false},
+			{Name: "cf-template-* S3/Cloudformation template injection", Selected: false, Complete: true},
+			{Name: "Pull Lambda Source", Selected: false, Complete: true},
+			{Name: "Pull Lambda Env Variables", Selected: false, Complete: true},
+			{Name: "S3 List/Recon", Selected: false, Complete: true},
 		},
 		GuidedCheckModules: []Module{
-			{Name: "SQS Queues", Selected: false},
-			{Name: "IAM Stuff", Selected: false},
+			{Name: "SQS Queues", Selected: false, Complete: true},
+			{Name: "IAM Stuff", Selected: false, Complete: true},
 		},
 
 		currentModuleIndex:      0,
@@ -280,8 +283,8 @@ func initialModel() model {
 		TotalChecks: 0,
 		TotalDone:   0,
 
-		spinner: s,
-		allDone: false,
+		spinner:       s,
+		pwndocAllDone: false,
 	}
 
 	// Dynamically create text inputs based on the fields of ConfigVars
@@ -549,6 +552,7 @@ func (m *model) updatePwndocChecks(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Toggle the selected state of the currently highlighted Pwndoc module
 			m.PwndocModules[m.currentPwndocIndex].Selected = !m.PwndocModules[m.currentPwndocIndex].Selected
 		case "enter":
+			// Make this a separate variable, update main update function and view function
 			m.ModuleSelection[0].Selected = false
 			return m, nil
 		case "q", "esc":
@@ -577,6 +581,7 @@ func (m *model) updateNonPwndocChecks(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Toggle the selected state of the currently highlighted Non Pwndoc module
 			m.NonPwndocModules[m.currentNonPwndocIndex].Selected = !m.NonPwndocModules[m.currentNonPwndocIndex].Selected
 		case "enter":
+			// Make this a separate variable, update main update function and view function
 			m.ModuleSelection[1].Selected = false
 
 			return m, nil
@@ -605,6 +610,7 @@ func (m *model) updateGuidedChecks(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Toggle the selected state of the currently highlighted Guided module
 			m.GuidedCheckModules[m.currentGuidedCheckIndex].Selected = !m.GuidedCheckModules[m.currentGuidedCheckIndex].Selected
 		case "enter":
+			// Make this a separate variable, update main update function and view function
 			m.ModuleSelection[2].Selected = false
 
 			return m, nil
@@ -711,14 +717,22 @@ func (m *model) updateExecuteChecks(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case S3CompleteMsg:
+		m.pwndocAllDone = true
 		for i, mod := range m.PwndocModules {
 			if mod.Name == msg.ModuleName {
 				m.PwndocModules[i].Complete = true
 
 				// will need to make a loop that goes over all active modules eventually
-				m.allDone = true
+
+			}
+
+			//set alldone to false if any module is not complete
+			if !mod.Complete {
+				m.pwndocAllDone = false
 			}
 		}
+
+		m.pwndocAllDone = true
 		return m, s3DoneListen(m.s3DoneChan)
 	}
 	// Handle other messages or commands specific to execution
@@ -815,9 +829,9 @@ func moduleSelectionView(m model) string {
 		"Dive into the Dough of Innovation with Crumbus!",
 		"Crumbus: Because Reality Was Too Mainstream.",
 		"Sprinkle a Little Crumbus on Your Day!",
-		"Unleash the Whimsy – Crumbus is Here!",
+		"Unleash the Whimsy - Crumbus is Here!",
 		"Crumbus: Baking Your Ideas to Perfection.",
-		"Twist, Toss, Crumble – That's the Crumbus Way!",
+		"Twist, Toss, Crumble - That's the Crumbus Way!",
 		"Keep Crumbing Along with Crumbus!",
 		"Catch the Crumbs of Creativity with Crumbus.",
 		"Crumbus: A Sprinkle of Nonsense in Every Byte.",
@@ -963,7 +977,7 @@ func subModulesReviewView(m model) string {
 func executionView(m model) string {
 	var b strings.Builder
 
-	if !m.allDone {
+	if !m.pwndocAllDone {
 		b.WriteString("\n" + m.spinner.View() + " Crumbusing please wait...\n\n")
 	} else {
 		b.WriteString("\n✅ Crumbus complete\n\n")
@@ -971,6 +985,7 @@ func executionView(m model) string {
 
 	// display progress checked/total for Pwndoc checks
 	//if m.ModuleSelection[0].Selected {
+
 	b.WriteString("Pwndoc Checks:\n")
 	for _, mod := range m.PwndocModules {
 
@@ -985,8 +1000,11 @@ func executionView(m model) string {
 	//}
 
 	// display progress checked/total for Non Pwndoc checks
-	//if m.ModuleSelection[1].Selected {
+	// may be easier to make a new var
+	//if no modules are selected,
+
 	b.WriteString("\nNon Pwndoc Checks:\n")
+
 	for _, mod := range m.NonPwndocModules {
 		if mod.Selected && !mod.Complete {
 			b.WriteString(m.spinner.View() + fmt.Sprintf(" %s: %d/%d", mod.Name, mod.Checked, mod.Total) + "\n")
