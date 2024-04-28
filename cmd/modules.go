@@ -99,9 +99,9 @@ func ModuleRunner(m *model) tea.Cmd {
 }
 
 func AccesKeyScoutQuery(m *model, currentMod string, reportFiles []string, numReports int) error {
-
+	// var affectedAssets int
 	jsonDataList := make([]interface{}, 0, len(reportFiles))
-
+	// i think maybe i should wrap everything in the for loop, or find an easier way to separate multiple reports
 	for _, file := range reportFiles {
 		m.moduleDebugChan <- DebugMsg{Message: "Processing file: " + file}
 		//time.Sleep(2 * time.Second)
@@ -122,11 +122,10 @@ func AccesKeyScoutQuery(m *model, currentMod string, reportFiles []string, numRe
 	}
 	//time.Sleep(2 * time.Second)
 	//var cmds []tea.Cmd
-
+	currentReportNum := 1
 	for _, jsonData := range jsonDataList {
 
 		m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Running module %s", currentMod)}
-		currentReportNum := 1
 
 		//time.Sleep(2 * time.Second) // Simulate delay
 
@@ -172,10 +171,17 @@ func AccesKeyScoutQuery(m *model, currentMod string, reportFiles []string, numRe
 				return nil
 			}
 
-			//set statusMessage to the value of the key
+			// set statusMessage to the value of the key
+			var keyval string
+			// affectedAssets += len(v.([]interface{}))
+			for _, value := range v.([]interface{}) {
+
+				//Here's where I'm going to make another query to get more info on the key
+				keyval += fmt.Sprintf("%v,", value)
+			}
 
 			checkedCount++
-			m.moduleProgressChan <- ModuleProgressMsg{ModuleName: currentMod, Checked: checkedCount, Total: totalCount, StatusMessage: fmt.Sprintf("v: %v", v)}
+			m.moduleProgressChan <- ModuleProgressMsg{ModuleName: currentMod, Checked: checkedCount, Total: totalCount, StatusMessage: keyval}
 			time.Sleep(2 * time.Second)
 
 		}
@@ -267,7 +273,7 @@ func AccesKeyScoutQuery(m *model, currentMod string, reportFiles []string, numRe
 
 func OpenS3(moduleName string, moduleProgressChan chan<- ModuleProgressMsg, moduleDoneChan chan<- ModuleCompleteMsg) tea.Cmd {
 
-	totalBuckets := 10 // Dummy value for total buckets
+	totalBuckets := 4 // Dummy value for total buckets
 	for i := 1; i <= totalBuckets; i++ {
 		time.Sleep(time.Second) // Simulate delay
 		//println("Checking bucket", i, "in module", moduleName)

@@ -1055,7 +1055,14 @@ func executionView(m model) string {
 		} else if mod.Selected && !mod.Complete {
 			b.WriteString(m.spinner.View() + fmt.Sprintf(" %s: %d/%d - %s", mod.Name, mod.Checked, mod.Total, mod.StatusMessage) + "\n")
 		} else if mod.Selected && mod.Complete {
-			b.WriteString(fmt.Sprintf("✅ %s: Complete - %s", mod.Name, mod.StatusMessage) + "\n")
+			// Bell pepper emoji if mod.Total > 0
+			if mod.Total > 0 {
+				//Should use something other than mod.Total, in case of non scoutsuite checks. Total is fine for those. Add affected assets to the model likely and get a count from there.
+				b.WriteString(fmt.Sprintf("🫑 %s: Complete - %d Affected Assets!: %s", mod.Name, mod.Total, mod.StatusMessage) + "\n")
+			} else {
+				b.WriteString(fmt.Sprintf("✅ %s: Complete", mod.Name) + "\n")
+			}
+
 			// find a better way to do this
 		} else {
 			b.WriteString(fmt.Sprintf("❌ %s: Not selected", mod.Name) + "\n")
@@ -1074,7 +1081,12 @@ func executionView(m model) string {
 		if mod.Selected && !mod.Complete {
 			b.WriteString(m.spinner.View() + fmt.Sprintf(" %s: %d/%d", mod.Name, mod.Checked, mod.Total) + "\n")
 		} else if mod.Selected && mod.Complete {
-			b.WriteString(fmt.Sprintf("✅ %s: Complete", mod.Name) + "\n")
+			// Bell pepper emoji if mod.Total > 0
+			if mod.Total > 0 {
+				b.WriteString(fmt.Sprintf("🫑 %s: Complete - %d Affected Assets!", mod.Name, mod.Total) + "\n")
+			} else {
+				b.WriteString(fmt.Sprintf("✅ %s: Complete", mod.Name) + "\n")
+			}
 		}
 	}
 	//}
@@ -1086,7 +1098,12 @@ func executionView(m model) string {
 		if mod.Selected && !mod.Complete {
 			b.WriteString(m.spinner.View() + fmt.Sprintf(" %s: %d/%d", mod.Name, mod.Checked, mod.Total) + "\n")
 		} else if mod.Selected && mod.Complete {
-			b.WriteString(fmt.Sprintf("✅ %s: Complete", mod.Name) + "\n")
+			// Bell pepper emoji if mod.Total > 0
+			if mod.Total > 0 {
+				b.WriteString(fmt.Sprintf("🫑 %s: Complete - %d Affected Assets!", mod.Name, mod.Total) + "\n")
+			} else {
+				b.WriteString(fmt.Sprintf("✅ %s: Complete", mod.Name) + "\n")
+			}
 		}
 	}
 	//}
