@@ -739,13 +739,12 @@ func (m *model) updateExecuteChecks(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			//set alldone to false if any module is not complete
-			if !mod.Complete {
+			if !m.PwndocModules[i].Complete {
 				m.pwndocAllDone = false
 			}
 		}
-		// will need to make loops for other modules and if all are complete, set all done to true. re-add alldone to view
 
-		m.pwndocAllDone = true
+		// m.pwndocAllDone = true
 		return m, moduleDoneListen(m.moduleDoneChan)
 
 	case ModuleErrMsg:

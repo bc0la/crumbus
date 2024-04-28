@@ -92,7 +92,7 @@ func ModuleRunner(m *model) tea.Cmd {
 			//m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Module %s selected: %t", module.Name, module.Selected)}
 		}
 
-		time.Sleep(2 * time.Second)
+		//time.Sleep(2 * time.Second)
 		//return nil
 		return tea.Batch(cmds...)
 	}
@@ -104,7 +104,7 @@ func AccesKeyScoutQuery(m *model, currentMod string, reportFiles []string, numRe
 
 	for _, file := range reportFiles {
 		m.moduleDebugChan <- DebugMsg{Message: "Processing file: " + file}
-		time.Sleep(2 * time.Second)
+		//time.Sleep(2 * time.Second)
 		jsonData, err := preprocessFile(file)
 		if err != nil {
 			m.moduleDebugChan <- DebugMsg{Message: err.Error()}
@@ -128,7 +128,7 @@ func AccesKeyScoutQuery(m *model, currentMod string, reportFiles []string, numRe
 		m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Running module %s", currentMod)}
 		currentReportNum := 1
 
-		time.Sleep(2 * time.Second) // Simulate delay
+		//time.Sleep(2 * time.Second) // Simulate delay
 
 		AccessKeyAgeAffectedQueryString := ".services.iam.findings[\"iam-user-no-Active-key-rotation\"].items"
 		//
@@ -171,9 +171,10 @@ func AccesKeyScoutQuery(m *model, currentMod string, reportFiles []string, numRe
 				m.moduleErrChan <- ModuleErrMsg{ModuleName: currentMod, ErrorMessage: "accessKeyAgeQuery iter: " + err.Error()}
 				return nil
 			}
+			checkedCount++
 			m.moduleProgressChan <- ModuleProgressMsg{ModuleName: currentMod, Checked: checkedCount, Total: totalCount, StatusMessage: fmt.Sprintf("v: %v", v)}
 			time.Sleep(2 * time.Second)
-			checkedCount++
+
 		}
 		currentReportNum++
 	}
