@@ -6,7 +6,6 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"math"
 	"math/rand"
 	"os"
@@ -96,26 +95,15 @@ func frame() tea.Cmd {
 	})
 }
 
-type S3ProgressMsg struct {
-	ModuleName    string
-	Checked       int
-	Total         int
-	StatusMessage string
-}
-
-type S3CompleteMsg struct {
-	ModuleName string
-}
-
 type configUpdatedMsg struct {
 	ConfigVars struct {
-		PwndocUrl        string
-		OutputDir        string
-		ScoutSuiteReport string
-		AwsAccessKey     string
-		AwsSecretKey     string
-		AwsToken         string
-		TestValue        string
+		PwndocUrl            string
+		OutputDir            string
+		ScoutSuiteReportsDir string
+		AwsAccessKey         string
+		AwsSecretKey         string
+		AwsToken             string
+		TestValue            string
 	}
 }
 
@@ -125,13 +113,18 @@ type Module struct {
 	Checked       int
 	Total         int
 	Complete      bool
+	Errored       bool
 	StatusMessage string
 }
 
 type model struct {
 	// may be better to initialize this later
-	s3ProgressChan chan S3ProgressMsg
-	s3DoneChan     chan S3CompleteMsg
+	moduleProgressChan chan ModuleProgressMsg
+	moduleDoneChan     chan ModuleCompleteMsg
+	moduleErrChan      chan ModuleErrMsg
+	moduleDebugChan    chan DebugMsg
+
+	DebugMsgText string
 
 	// are we quitting?
 	Quitting bool
@@ -162,13 +155,13 @@ type model struct {
 	Executing          bool
 	// Config vars for config.json/tool configuration
 	ConfigVars struct {
-		PwndocUrl        string
-		OutputDir        string
-		ScoutSuiteReport string
-		AwsAccessKey     string
-		AwsSecretKey     string
-		AwsToken         string
-		TestValue        string
+		PwndocUrl            string
+		OutputDir            string
+		ScoutSuiteReportsDir string
+		AwsAccessKey         string
+		AwsSecretKey         string
+		AwsToken             string
+		TestValue            string
 	}
 	// textinput
 	focusIndex int
@@ -196,21 +189,21 @@ type errMsg struct {
 
 func initialModel() model {
 	var configVars = struct {
-		PwndocUrl        string
-		OutputDir        string
-		ScoutSuiteReport string
-		AwsAccessKey     string
-		AwsSecretKey     string
-		AwsToken         string
-		TestValue        string
+		PwndocUrl            string
+		OutputDir            string
+		ScoutSuiteReportsDir string
+		AwsAccessKey         string
+		AwsSecretKey         string
+		AwsToken             string
+		TestValue            string
 	}{
-		PwndocUrl:        "https://192.168.1.51:8443",
-		OutputDir:        "/home/username/crumbus/outputs",
-		ScoutSuiteReport: "/home/username/crumbus/scout/scoutsuite-report.html",
-		AwsAccessKey:     "",
-		AwsSecretKey:     "",
-		AwsToken:         "",
-		TestValue:        "test",
+		PwndocUrl:            "https://192.168.1.51:8443",
+		OutputDir:            "/home/username/crumbus/outputs",
+		ScoutSuiteReportsDir: "~/op/recon/cloud/scout",
+		AwsAccessKey:         "",
+		AwsSecretKey:         "",
+		AwsToken:             "",
+		TestValue:            "test",
 	}
 
 	// Check if config file exists and load it
@@ -231,8 +224,10 @@ func initialModel() model {
 	s.Spinner = spinner.Line
 	s.Style = spinnerStyle
 	m := model{
-		s3ProgressChan: make(chan S3ProgressMsg),
-		s3DoneChan:     make(chan S3CompleteMsg),
+		moduleProgressChan: make(chan ModuleProgressMsg),
+		moduleDoneChan:     make(chan ModuleCompleteMsg),
+		moduleErrChan:      make(chan ModuleErrMsg),
+		moduleDebugChan:    make(chan DebugMsg),
 
 		Quitting:           false,
 		Module:             0,
@@ -326,7 +321,7 @@ func (m model) Init() tea.Cmd {
 	// 	return textinput.Blink
 	// }
 
-	return tea.Batch(m.spinner.Tick, textinput.Blink, s3ProgressListen(m.s3ProgressChan), s3DoneListen(m.s3DoneChan), frame())
+	return tea.Batch(m.spinner.Tick, textinput.Blink, moduleProgressListen(m.moduleProgressChan), moduleDoneListen(m.moduleDoneChan), moduleErrListen(m.moduleErrChan), debugListen(m.moduleDebugChan), frame())
 }
 
 // Main update function.
@@ -635,8 +630,21 @@ func (m *model) updateReviewSubModules(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.SubModulesReviewed = true
 			m.Executing = true
 
-			// cmds will need to be stored in a variable, and add logid to tell whether or not to apend a command
-			return m, tea.Batch(m.spinner.Tick, OpenS3(m.PwndocModules[1].Name, m.s3ProgressChan, m.s3DoneChan), frame())
+			// cmds will need to be stored in a variable, and add logic to tell whether or not to apend a command
+			var cmds []tea.Cmd
+			cmds = append(cmds, frame())
+			cmds = append(cmds, m.spinner.Tick)
+
+			// if m.PwndocModules[0].Selected {
+			// 	cmds = append(cmds, OpenS3(m.PwndocModules[0].Name, m.moduleProgressChan, m.moduleDoneChan))
+			// }
+			// if m.PwndocModules[1].Selected {
+			// 	cmds = append(cmds, OpenS3(m.PwndocModules[1].Name, m.moduleProgressChan, m.moduleDoneChan))
+			// }
+
+			cmds = append(cmds, ModuleRunner(m))
+
+			return m, tea.Batch(cmds...)
 		case "q", "esc":
 			// Exit
 			return m, tea.Quit
@@ -665,31 +673,6 @@ func (m *model) updateExecuteChecks(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
-	case S3ProgressMsg:
-		//log to file that msg was received
-		// f, err := os.OpenFile("s3progress.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		// if err != nil {
-		// 	log.Fatal(err)
-		// }
-		// defer f.Close()
-
-		// if _, err := f.Write([]byte("Received Progress message\n")); err != nil {
-		// 	log.Fatal(err)
-		// }
-		m.TotalChecks = 0
-		m.TotalDone = 0
-		for i, mod := range m.PwndocModules {
-			if mod.Name == msg.ModuleName {
-				m.PwndocModules[i].Checked = msg.Checked
-				m.PwndocModules[i].Total = msg.Total
-				m.PwndocModules[i].StatusMessage = msg.StatusMessage
-				m.TotalChecks += msg.Total
-				m.TotalDone += msg.Checked
-			}
-
-		}
-
-		return m, s3ProgressListen(m.s3ProgressChan)
 	case frameMsg:
 		if !m.Loaded {
 			targetProgress := float64(m.TotalDone) / float64(m.TotalChecks)
@@ -717,7 +700,34 @@ func (m *model) updateExecuteChecks(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, frame()
 		}
 
-	case S3CompleteMsg:
+	case ModuleProgressMsg:
+		//log to file that msg was received
+		// f, err := os.OpenFile("s3progress.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		// if err != nil {
+		// 	log.Fatal(err)
+		// }
+		// defer f.Close()
+
+		// if _, err := f.Write([]byte("Received Progress message\n")); err != nil {
+		// 	log.Fatal(err)
+		// }
+		m.TotalChecks = 0
+		m.TotalDone = 0
+		for i, mod := range m.PwndocModules {
+			if mod.Name == msg.ModuleName {
+				m.PwndocModules[i].Checked = msg.Checked
+				m.PwndocModules[i].Total = msg.Total
+				m.PwndocModules[i].StatusMessage = msg.StatusMessage
+				// i think this may cause issues. should maybe set total checks/total done outside/after the if statement bsed on m.PwndocModules[i].Total That should be all
+				m.TotalChecks += msg.Total
+				m.TotalDone += msg.Checked
+			}
+
+		}
+
+		return m, moduleProgressListen(m.moduleProgressChan)
+
+	case ModuleCompleteMsg:
 		m.pwndocAllDone = true
 		for i, mod := range m.PwndocModules {
 			if mod.Name == msg.ModuleName {
@@ -735,8 +745,25 @@ func (m *model) updateExecuteChecks(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// will need to make loops for other modules and if all are complete, set all done to true. re-add alldone to view
 
 		m.pwndocAllDone = true
-		return m, s3DoneListen(m.s3DoneChan)
+		return m, moduleDoneListen(m.moduleDoneChan)
+
+	case ModuleErrMsg:
+
+		for i, mod := range m.PwndocModules {
+			if mod.Name == msg.ModuleName {
+				m.PwndocModules[i].StatusMessage = msg.ErrorMessage
+				m.PwndocModules[i].Errored = true
+
+			}
+
+		}
+		return m, moduleErrListen(m.moduleErrChan)
+
+	case DebugMsg:
+		m.DebugMsgText = msg.Message
+		return m, debugListen(m.moduleDebugChan)
 	}
+
 	// Handle other messages or commands specific to execution
 	return m, nil
 }
@@ -1015,11 +1042,16 @@ func executionView(m model) string {
 	b.WriteString("Pwndoc Checks:\n")
 	for _, mod := range m.PwndocModules {
 
-		if mod.Selected && !mod.Complete {
+		if mod.Errored && !mod.Complete {
+			b.WriteString(fmt.Sprintf("❌ %s: %s", mod.Name, mod.StatusMessage) + "\n")
+
+		} else if mod.Selected && !mod.Complete {
 			b.WriteString(m.spinner.View() + fmt.Sprintf(" %s: %d/%d - %s", mod.Name, mod.Checked, mod.Total, mod.StatusMessage) + "\n")
 		} else if mod.Selected && mod.Complete {
 			b.WriteString(fmt.Sprintf("✅ %s: Complete", mod.Name) + "\n")
 			// find a better way to do this
+		} else {
+			b.WriteString(fmt.Sprintf("❌ %s: Not selected", mod.Name) + "\n")
 		}
 
 	}
@@ -1055,6 +1087,7 @@ func executionView(m model) string {
 	b.WriteString(fmt.Sprintf("Total: %d/%d", m.TotalDone, m.TotalChecks))
 	b.WriteString("\n\n")
 	b.WriteString(progressbar(m.Progress) + "\n\n")
+	b.WriteString(m.DebugMsgText + "\n")
 	b.WriteString(subtleStyle.Render("Press q or esc to quit"))
 
 	return b.String()
@@ -1101,57 +1134,6 @@ func updateConfigVars(m *model) tea.Cmd {
 }
 
 // try moving this to another file
-func OpenS3(moduleName string, s3ProgressChan chan S3ProgressMsg, s3DoneChan chan<- S3CompleteMsg) tea.Cmd {
-	return func() tea.Msg {
-		totalBuckets := 4 // Dummy value for total buckets
-		bucketName := []string{"bucket1", "bucket2", "bucket3", "bucket4"}
-		s3ProgressChan <- S3ProgressMsg{ModuleName: moduleName, Checked: 0, Total: totalBuckets, StatusMessage: "Starting S3 checks"}
-		time.Sleep(time.Second) // Simulate delay
-		for i := 1; i <= totalBuckets; i++ {
-
-			s3ProgressChan <- S3ProgressMsg{ModuleName: moduleName, Checked: i, Total: totalBuckets, StatusMessage: "Checking bucket: " + bucketName[i-1]}
-			time.Sleep(time.Second) // Simulate delay
-			//println("Checking bucket", i, "in module", moduleName)
-			f, err := os.OpenFile("s3progress.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-			if err != nil {
-				log.Fatal(err)
-			}
-			defer f.Close()
-
-			if _, err := f.Write([]byte("Sending Progress message: " + fmt.Sprint(i) + "\n")); err != nil {
-				log.Fatal(err)
-			}
-
-			if _, err := f.Write([]byte("Sent Progress message: " + fmt.Sprint(i) + "\n")); err != nil {
-				log.Fatal(err)
-			}
-		}
-		s3DoneChan <- S3CompleteMsg{ModuleName: moduleName}
-		return nil
-	}
-}
-
-func s3ProgressListen(s3ProgressChan chan S3ProgressMsg) tea.Cmd {
-	return func() tea.Msg {
-		f, err := os.OpenFile("s3progress.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer f.Close()
-
-		if _, err := f.Write([]byte("Listening for progress\n")); err != nil {
-			log.Fatal(err)
-		}
-
-		return S3ProgressMsg(<-s3ProgressChan)
-	}
-}
-
-func s3DoneListen(s3DoneChan chan S3CompleteMsg) tea.Cmd {
-	return func() tea.Msg {
-		return S3CompleteMsg(<-s3DoneChan)
-	}
-}
 
 // Write the config to file
 func writeConfig(m *model) tea.Cmd {
