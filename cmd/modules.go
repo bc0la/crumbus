@@ -41,6 +41,11 @@ type DebugMsg struct {
 	Message string
 }
 
+type ModuleAffectedAssetMsg struct {
+	ModuleName    string
+	AffectedAsset AffectedAsset
+}
+
 func expandHome(path string) string {
 	if strings.HasPrefix(path, "~/") {
 		usr, err := user.Current()
@@ -139,6 +144,10 @@ func AccesKeyScoutQuery(m *model, currentMod string, reportFiles []string, numRe
 			affectedAssetsKeyUser = append(affectedAssetsKeyUser, accessKeyUserName)
 
 			checkedAssets++
+
+			// Send the affected asset to the model
+			m.moduleAffectedAssetChan <- ModuleAffectedAssetMsg{ModuleName: currentMod, AffectedAsset: AffectedAsset{ID: accessKeyID, Name: accessKeyUserName}}
+
 			m.moduleProgressChan <- ModuleProgressMsg{ModuleName: currentMod, Checked: checkedAssets, StatusMessage: "Checking " + accessKeyID}
 
 		}
@@ -467,6 +476,12 @@ func moduleErrListen(moduleErrChan chan ModuleErrMsg) tea.Cmd {
 func debugListen(debugChan chan DebugMsg) tea.Cmd {
 	return func() tea.Msg {
 		return DebugMsg(<-debugChan)
+	}
+}
+
+func affectedAssetListen(affectedAssetChan chan ModuleAffectedAssetMsg) tea.Cmd {
+	return func() tea.Msg {
+		return ModuleAffectedAssetMsg(<-affectedAssetChan)
 	}
 }
 

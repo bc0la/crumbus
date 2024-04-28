@@ -106,23 +106,28 @@ type configUpdatedMsg struct {
 		TestValue            string
 	}
 }
-
+type AffectedAsset struct {
+	ID   string
+	Name string
+}
 type Module struct {
-	Name          string
-	Selected      bool
-	Checked       int
-	Total         int
-	Complete      bool
-	Errored       bool
-	StatusMessage string
+	Name           string
+	Selected       bool
+	Checked        int
+	Total          int
+	Complete       bool
+	Errored        bool
+	StatusMessage  string
+	AffectedAssets []AffectedAsset
 }
 
 type model struct {
 	// may be better to initialize this later
-	moduleProgressChan chan ModuleProgressMsg
-	moduleDoneChan     chan ModuleCompleteMsg
-	moduleErrChan      chan ModuleErrMsg
-	moduleDebugChan    chan DebugMsg
+	moduleProgressChan      chan ModuleProgressMsg
+	moduleDoneChan          chan ModuleCompleteMsg
+	moduleErrChan           chan ModuleErrMsg
+	moduleDebugChan         chan DebugMsg
+	moduleAffectedAssetChan chan ModuleAffectedAssetMsg
 
 	DebugMsgText string
 
@@ -224,10 +229,11 @@ func initialModel() model {
 	s.Spinner = spinner.Line
 	s.Style = spinnerStyle
 	m := model{
-		moduleProgressChan: make(chan ModuleProgressMsg),
-		moduleDoneChan:     make(chan ModuleCompleteMsg),
-		moduleErrChan:      make(chan ModuleErrMsg),
-		moduleDebugChan:    make(chan DebugMsg),
+		moduleProgressChan:      make(chan ModuleProgressMsg),
+		moduleDoneChan:          make(chan ModuleCompleteMsg),
+		moduleErrChan:           make(chan ModuleErrMsg),
+		moduleDebugChan:         make(chan DebugMsg),
+		moduleAffectedAssetChan: make(chan ModuleAffectedAssetMsg),
 
 		Quitting:           false,
 		Module:             0,
@@ -321,7 +327,7 @@ func (m model) Init() tea.Cmd {
 	// 	return textinput.Blink
 	// }
 
-	return tea.Batch(m.spinner.Tick, textinput.Blink, moduleProgressListen(m.moduleProgressChan), moduleDoneListen(m.moduleDoneChan), moduleErrListen(m.moduleErrChan), debugListen(m.moduleDebugChan), frame())
+	return tea.Batch(m.spinner.Tick, textinput.Blink, moduleProgressListen(m.moduleProgressChan), moduleDoneListen(m.moduleDoneChan), moduleErrListen(m.moduleErrChan), debugListen(m.moduleDebugChan), affectedAssetListen(m.moduleAffectedAssetChan), frame())
 }
 
 // Main update function.
@@ -778,9 +784,16 @@ func (m *model) updateExecuteChecks(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case DebugMsg:
 		m.DebugMsgText = msg.Message
 		return m, debugListen(m.moduleDebugChan)
-	}
 
-	// Handle other messages or commands specific to execution
+	case ModuleAffectedAssetMsg:
+		for i, mod := range m.PwndocModules {
+			if mod.Name == msg.ModuleName {
+				m.PwndocModules[i].AffectedAssets = append(m.PwndocModules[i].AffectedAssets, msg.AffectedAsset)
+			}
+		}
+
+		// Handle other messages or commands specific to execution
+	}
 	return m, nil
 }
 
@@ -1058,7 +1071,9 @@ func executionView(m model) string {
 	b.WriteString("Pwndoc Checks:\n")
 	for _, mod := range m.PwndocModules {
 
-		if mod.Errored && !mod.Complete {
+		affectedAssetsDescription := formatAssets(mod.AffectedAssets)
+
+		if mod.Errored {
 			b.WriteString(fmt.Sprintf("❌ %s: %s", mod.Name, mod.StatusMessage) + "\n")
 
 		} else if mod.Selected && !mod.Complete {
@@ -1067,7 +1082,7 @@ func executionView(m model) string {
 			// Bell pepper emoji if mod.Total > 0
 			if mod.Total > 0 {
 				//Should use something other than mod.Total, in case of non scoutsuite checks. Total is fine for those. Add affected assets to the model likely and get a count from there.
-				b.WriteString(fmt.Sprintf("🫑 %s: Complete - %d Affected Assets!: %s", mod.Name, mod.Total, mod.StatusMessage) + "\n")
+				b.WriteString(fmt.Sprintf("🫑 %s: Complete - %d Affected Assets!: %s", mod.Name, mod.Total, affectedAssetsDescription) + "\n")
 			} else {
 				b.WriteString(fmt.Sprintf("✅ %s: Complete", mod.Name) + "\n")
 			}
@@ -1186,6 +1201,21 @@ func writeConfig(m *model) tea.Cmd {
 }
 
 // Utils
+func formatAsset(asset AffectedAsset) string {
+	return fmt.Sprintf("ID: %s, Name: %s", asset.ID, asset.Name)
+}
+
+func formatAssets(assets []AffectedAsset) string {
+	var result strings.Builder
+	for i, asset := range assets {
+		if i > 0 {
+			result.WriteString(", ") // Adding a separator between assets
+		}
+		result.WriteString(formatAsset(asset))
+	}
+	return result.String()
+}
+
 func progressbar(percent float64) string {
 	// Ensure percent is within the valid range
 	if percent < 0 {
