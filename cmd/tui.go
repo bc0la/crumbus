@@ -722,9 +722,18 @@ func (m *model) updateExecuteChecks(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.TotalDone = 0
 		for i, mod := range m.PwndocModules {
 			if mod.Name == msg.ModuleName {
-				m.PwndocModules[i].Checked = msg.Checked
-				m.PwndocModules[i].Total = msg.Total
-				m.PwndocModules[i].StatusMessage = msg.StatusMessage
+				//if nil, dont set anything
+				if msg.Checked > 0 {
+					m.PwndocModules[i].Checked = msg.Checked
+				}
+				if msg.Total > 0 {
+					m.PwndocModules[i].Total = msg.Total
+				}
+				if msg.StatusMessage != "" {
+
+					m.PwndocModules[i].StatusMessage = msg.StatusMessage
+				}
+
 				// i think this may cause issues. should maybe set total checks/total done outside/after the if statement bsed on m.PwndocModules[i].Total That should be all
 
 			}
@@ -1178,18 +1187,32 @@ func writeConfig(m *model) tea.Cmd {
 
 // Utils
 func progressbar(percent float64) string {
+	// Ensure percent is within the valid range
+	if percent < 0 {
+		percent = 0
+	} else if percent > 1 {
+		percent = 1
+	}
+
 	w := float64(progressBarWidth)
 
 	fullSize := int(math.Round(w * percent))
+	if fullSize > int(w) {
+		fullSize = int(w)
+	}
+
 	var fullCells string
 	for i := 0; i < fullSize; i++ {
 		fullCells += ramp[i].Render(progressFullChar)
 	}
 
 	emptySize := int(w) - fullSize
+	if emptySize < 0 {
+		emptySize = 0 // Ensure that emptySize is never negative
+	}
 	emptyCells := strings.Repeat(progressEmpty, emptySize)
 
-	return fmt.Sprintf("%s%s %3.0f", fullCells, emptyCells, math.Round(percent*100))
+	return fmt.Sprintf("%s%s %3.0f%%", fullCells, emptyCells, math.Round(percent*100))
 }
 
 func makeRampStyles(colorA, colorB string, steps float64) (s []lipgloss.Style) {

@@ -128,103 +128,158 @@ func AccesKeyScoutQuery(m *model, currentMod string, reportFiles []string, numRe
 
 		m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Running module %s", currentMod)}
 
-		//time.Sleep(2 * time.Second) // Simulate delay
+		//time.Sleep(2 * time.Second)
 
 		AccessKeyAgeAffectedQueryString := ".services.iam.findings[\"iam-user-no-Active-key-rotation\"].items"
-		//
 
 		m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Checking report number %d of %d", currentReportNum, numReports)}
-		// Execute the counting query
-		countAgeQuery, err := gojq.Parse(AccessKeyAgeAffectedQueryString)
-		if err != nil {
-			m.moduleErrChan <- ModuleErrMsg{ModuleName: currentMod, ErrorMessage: "countAgeQuery Parse: " + err.Error()}
-			time.Sleep(3 * time.Second)
+
+		// Gets the locations of the affected assets for the Access Key Age
+		findingAssetIDS := jqFindings(m, jsonData, currentMod, AccessKeyAgeAffectedQueryString)
+		// iterate over the slice of asset IDS
+
+		// transform the asset IDS into a path that can be used to query the json data
+		var affectedAssetsKeyIDs []string
+		checkedAssets := 0
+		for _, id := range findingAssetIDS {
+
+			affectedKeyIDpath := (".services" + transformPath(id) + ".AccessKeyId")
+			m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Transformed Path: %s", affectedKeyIDpath)}
+			//time.Sleep(2 * time.Second)
+			// Query the json data for the specific assets
+			accessKeyID := jqAssets(m, jsonData, currentMod, affectedKeyIDpath)
+
+			//add the Access Key ID string to the slice
+			affectedAssetsKeyIDs = append(affectedAssetsKeyIDs, accessKeyID)
+
+			checkedAssets++
+			m.moduleProgressChan <- ModuleProgressMsg{ModuleName: currentMod, Checked: checkedAssets, StatusMessage: "Checking " + accessKeyID}
 
 		}
+		m.moduleProgressChan <- ModuleProgressMsg{ModuleName: currentMod, Checked: checkedAssets, StatusMessage: fmt.Sprintf("Finished: %v", affectedAssetsKeyIDs)}
+		m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Affected Assets: %v", affectedAssetsKeyIDs)}
 
-		countIter := countAgeQuery.Run(jsonData)
-		totalCount := 0
-		for {
-			_, ok := countIter.Next()
-			if !ok {
-				break
-			}
-			totalCount++
+		//m.moduleProgressChan <- ModuleProgressMsg{ModuleName: currentMod, Checked: checkedCount, Total: totalCount}
+		// time.Sleep(2 * time.Second)
 
-		}
-		m.moduleProgressChan <- ModuleProgressMsg{ModuleName: currentMod, Checked: 0, Total: totalCount, StatusMessage: "Counting"}
-		// Perform full query
-		accessKeyAgeQuery, err := gojq.Parse(AccessKeyAgeAffectedQueryString)
-		if err != nil {
-			m.moduleErrChan <- ModuleErrMsg{ModuleName: currentMod, ErrorMessage: "accessKeyAgeQuery Parse: " + err.Error()}
-
-		}
-
-		accessKeyAgeIter := accessKeyAgeQuery.Run(jsonData)
-		checkedCount := 0
-		for {
-			v, ok := accessKeyAgeIter.Next()
-			if !ok {
-				break
-			}
-			if err, isErr := v.(error); isErr {
-				m.moduleErrChan <- ModuleErrMsg{ModuleName: currentMod, ErrorMessage: "accessKeyAgeQuery iter: " + err.Error()}
-				return nil
-			}
-
-			// set statusMessage to the value of the key
-			var keyval string
-			// affectedAssets += len(v.([]interface{}))
-			for _, value := range v.([]interface{}) {
-
-				//Here's where I'm going to make another query to get more info on the key
-				keyval = fmt.Sprintf("%v", value)
-				transformedPath := transformPath(keyval)
-				m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Transformed Path: %s", transformedPath)}
-				//time.Sleep(1 * time.Second)
-				if err != nil {
-					m.DebugMsgText = err.Error()
-				} else {
-					accessKeyAgeAssetQuery, err := gojq.Parse(".services" + transformedPath + ".AccessKeyId")
-					m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("accessKeyAgeAssetQuery: %s", accessKeyAgeAssetQuery)}
-					if err != nil {
-						m.moduleErrChan <- ModuleErrMsg{ModuleName: currentMod, ErrorMessage: "accessKeyAgeAssetQuery Parse: " + err.Error()}
-
-					} else {
-						accessKeyAgeAssetIter := accessKeyAgeAssetQuery.Run(jsonData)
-						for {
-							x, ok := accessKeyAgeAssetIter.Next()
-							if !ok {
-								break
-							}
-							if err, isErr := x.(error); isErr {
-								m.moduleErrChan <- ModuleErrMsg{ModuleName: currentMod, ErrorMessage: "accessKeyAgeAssetQuery iter: " + err.Error()}
-								return nil
-							}
-							affectedAssets := []string{fmt.Sprintf("%v", x)}
-
-							// create a new string, assigning the value of each slice to the string
-							assetString := strings.Join(affectedAssets, ", ")
-							m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Affected Assets: %v", affectedAssets[0])}
-
-							//m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Affected Assets: %s", x)}
-							m.moduleProgressChan <- ModuleProgressMsg{ModuleName: currentMod, Checked: checkedCount, Total: totalCount, StatusMessage: assetString}
-
-						}
-					}
-				}
-
-			}
-
-			checkedCount++
-			//m.moduleProgressChan <- ModuleProgressMsg{ModuleName: currentMod, Checked: checkedCount, Total: totalCount}
-			// time.Sleep(2 * time.Second)
-
-		}
 		currentReportNum++
 	}
+
 	m.moduleDoneChan <- ModuleCompleteMsg{ModuleName: currentMod}
 	return nil
+}
+
+// This function pulls the ids of the affected assets from the json data, and gets a count of the total number of affected assets
+func jqFindings(m *model, jsonData interface{}, currentMod string, findingQueryString string) []string {
+
+	// Parse the string to create a gojq query
+	findingQuery, err := gojq.Parse(findingQueryString)
+	if err != nil {
+		m.moduleErrChan <- ModuleErrMsg{ModuleName: currentMod, ErrorMessage: "countAgeQuery Parse: " + err.Error()}
+		time.Sleep(3 * time.Second)
+
+	}
+
+	//this gets us the total value for displaying in our execution view, it's not efficent but just in case I do more processing later
+	countIter := findingQuery.Run(jsonData)
+	totalCount := 0
+	for {
+		_, ok := countIter.Next()
+		if !ok {
+			break
+		}
+		totalCount++
+
+	}
+	m.moduleProgressChan <- ModuleProgressMsg{ModuleName: currentMod, Checked: 0, Total: totalCount, StatusMessage: "Counting"}
+
+	// Perform full query against the scoutsuite finding
+	// this may be redundant
+	accessKeyAgeQuery, err := gojq.Parse(findingQueryString)
+	if err != nil {
+		m.moduleErrChan <- ModuleErrMsg{ModuleName: currentMod, ErrorMessage: "accessKeyAgeQuery Parse: " + err.Error()}
+
+	}
+
+	findingIter := accessKeyAgeQuery.Run(jsonData)
+	// checkedCount := 0
+	var results []string
+	for {
+		v, ok := findingIter.Next()
+		if !ok {
+			break
+		}
+		if err, isErr := v.(error); isErr {
+			m.moduleErrChan <- ModuleErrMsg{ModuleName: currentMod, ErrorMessage: "accessKeyAgeQuery iter: " + err.Error()}
+			return nil
+		}
+		switch value := v.(type) {
+		case string:
+			results = append(results, value)
+			m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("v: %v", value)}
+			//time.Sleep(2 * time.Second)
+		case []interface{}:
+			for _, elem := range value {
+				strElem := fmt.Sprint(elem) // Convert each element to string
+				results = append(results, strElem)
+				m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("v: %v", strElem)}
+			}
+		default:
+			m.moduleErrChan <- ModuleErrMsg{ModuleName: currentMod, ErrorMessage: "accessKeyAgeQuery iter: " + "value is not a string" + fmt.Sprintf("v: %v %T", value, value)}
+			results = append(results, fmt.Sprint(value))
+
+		}
+
+	}
+	return results
+}
+
+func jqAssets(m *model, jsonData interface{}, currentMod string, findingQueryString string) string {
+
+	// Parse the string to create a gojq query
+
+	accessKeyAgeQuery, err := gojq.Parse(findingQueryString)
+	if err != nil {
+		m.moduleErrChan <- ModuleErrMsg{ModuleName: currentMod, ErrorMessage: "accessKeyAgeQuery Parse: " + err.Error()}
+
+	}
+	// Perform full query against the scoutsuite affected asset
+	findingIter := accessKeyAgeQuery.Run(jsonData)
+	// checkedCount := 0
+	var results string
+	for {
+		v, ok := findingIter.Next()
+		if !ok {
+			break
+		}
+		if err, isErr := v.(error); isErr {
+			m.moduleErrChan <- ModuleErrMsg{ModuleName: currentMod, ErrorMessage: "accessKeyAgeQuery iter: " + err.Error()}
+
+		}
+		switch value := v.(type) {
+		case string:
+			results = value
+			m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("v: %v", value)}
+			//time.Sleep(2 * time.Second)
+			return results
+		case []interface{}:
+			for _, elem := range value {
+				strElem := fmt.Sprint(elem) // Convert each element to string
+				// there should just be one elemet in the slice
+
+				results = strElem
+
+				m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("v: %v", strElem)}
+				return results
+			}
+
+		default:
+			m.moduleErrChan <- ModuleErrMsg{ModuleName: currentMod, ErrorMessage: "accessKeyAgeQuery iter: " + "value is not a string"}
+
+		}
+
+	}
+	return results
 }
 
 // func S3ScoutQuery(m *model, currentMod string, reportFiles []string, numReports int) error {
