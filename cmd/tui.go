@@ -244,7 +244,7 @@ func initialModel() model {
 			{Name: "Guided Checks", Selected: true, Complete: false},
 		},
 		PwndocModules: []Module{
-			{Name: "Access Key Age/Last Used", Selected: false, Complete: true},
+			{Name: "Access Key Age/Last Used", Selected: false, Complete: false},
 			{Name: "Open S3 Buckets (Authenticated/Anonymous)", Selected: false, Checked: 0, Total: 0, Complete: false},
 			{Name: "IMDSv1", Selected: false, Complete: true},
 			{Name: "Public RDS", Selected: false, Complete: true},
@@ -719,9 +719,10 @@ func (m *model) updateExecuteChecks(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.PwndocModules[i].Total = msg.Total
 				m.PwndocModules[i].StatusMessage = msg.StatusMessage
 				// i think this may cause issues. should maybe set total checks/total done outside/after the if statement bsed on m.PwndocModules[i].Total That should be all
-				m.TotalChecks += msg.Total
-				m.TotalDone += msg.Checked
+
 			}
+			m.TotalChecks += m.PwndocModules[i].Total
+			m.TotalDone += m.PwndocModules[i].Checked
 
 		}
 

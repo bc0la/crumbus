@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"log"
 
 	//"log"
 	"os"
@@ -55,6 +56,7 @@ func expandHome(path string) string {
 // Handle which modules are run
 func ModuleRunner(m *model) tea.Cmd {
 	return func() tea.Msg {
+		var cmds []tea.Cmd
 		scoutDir := expandHome(m.ConfigVars.ScoutSuiteReportsDir)
 		var reportFiles []string
 
@@ -78,54 +80,69 @@ func ModuleRunner(m *model) tea.Cmd {
 		m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Found %d reports", len(reportFiles))}
 		//time.Sleep(2 * time.Second)
 
-		jsonDataList := make([]interface{}, 0, len(reportFiles))
-
-		for _, file := range reportFiles {
-			m.moduleDebugChan <- DebugMsg{Message: "Processing file: " + file}
-
-			jsonData, err := preprocessFile(file)
-			if err != nil {
-				m.moduleDebugChan <- DebugMsg{Message: err.Error()}
-				continue
-			}
-			jsonDataList = append(jsonDataList, jsonData)
-		}
-		m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Finished Processing %d reports", len(reportFiles))}
-		//time.Sleep(2 * time.Second)
-		var cmds []tea.Cmd
 		for _, module := range m.PwndocModules {
+			if module.Selected && module.Name == "Access Key Age/Last Used" {
+				go AccesKeyScoutQuery(m, module.Name, reportFiles, len(reportFiles))
+			}
+
 			if module.Selected && module.Name == "Open S3 Buckets (Authenticated/Anonymous)" {
-				go S3ScoutQuery(m, module.Name, jsonDataList, len(reportFiles))
+				//go S3ScoutQuery(m, module.Name, reportFiles, len(reportFiles))
+				cmds = append(cmds, OpenS3(module.Name, m.moduleProgressChan, m.moduleDoneChan))
 			}
 			//m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Module %s selected: %t", module.Name, module.Selected)}
 		}
 
 		time.Sleep(2 * time.Second)
-
+		//return nil
 		return tea.Batch(cmds...)
 	}
 }
 
-func S3ScoutQuery(m *model, currentMod string, jsonDataList []interface{}, numReports int) error {
+func AccesKeyScoutQuery(m *model, currentMod string, reportFiles []string, numReports int) error {
 
-	m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Running module %s", currentMod)}
-	currentReportNum := 1
-	currentModName := currentMod
-	time.Sleep(2 * time.Second) // Simulate delay
+	jsonDataList := make([]interface{}, 0, len(reportFiles))
 
-	s3PublicQuery := ".users[] | select(.age > 23)"
+	for _, file := range reportFiles {
+		m.moduleDebugChan <- DebugMsg{Message: "Processing file: " + file}
+		time.Sleep(2 * time.Second)
+		jsonData, err := preprocessFile(file)
+		if err != nil {
+			m.moduleDebugChan <- DebugMsg{Message: err.Error()}
+			continue
+		}
+		jsonDataList = append(jsonDataList, jsonData)
+	}
+	m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Finished Processing %d reports", len(reportFiles))}
+	for _, jsonData := range jsonDataList {
+		if jsonData == nil {
+			m.moduleDebugChan <- DebugMsg{Message: "jsonData is nil, skipping"}
+			time.Sleep(2 * time.Second)
+			continue
+		}
+	}
+	//time.Sleep(2 * time.Second)
+	//var cmds []tea.Cmd
 
 	for _, jsonData := range jsonDataList {
 
+		m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Running module %s", currentMod)}
+		currentReportNum := 1
+
+		time.Sleep(2 * time.Second) // Simulate delay
+
+		AccessKeyAgeAffectedQueryString := ".services.iam.findings[\"iam-user-no-Active-key-rotation\"].items"
+		//
+
 		m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Checking report number %d of %d", currentReportNum, numReports)}
 		// Execute the counting query
-		countQuery, err := gojq.Parse(s3PublicQuery)
+		countAgeQuery, err := gojq.Parse(AccessKeyAgeAffectedQueryString)
 		if err != nil {
-			m.moduleErrChan <- ModuleErrMsg{ModuleName: currentModName, ErrorMessage: "countQuery Parse: " + err.Error()}
-			continue
+			m.moduleErrChan <- ModuleErrMsg{ModuleName: currentMod, ErrorMessage: "countAgeQuery Parse: " + err.Error()}
+			time.Sleep(3 * time.Second)
+
 		}
 
-		countIter := countQuery.Run(jsonData)
+		countIter := countAgeQuery.Run(jsonData)
 		totalCount := 0
 		for {
 			_, ok := countIter.Next()
@@ -133,59 +150,139 @@ func S3ScoutQuery(m *model, currentMod string, jsonDataList []interface{}, numRe
 				break
 			}
 			totalCount++
-			m.moduleProgressChan <- ModuleProgressMsg{ModuleName: currentModName, Checked: 0, Total: totalCount, StatusMessage: "Counting"}
-		}
 
+		}
+		m.moduleProgressChan <- ModuleProgressMsg{ModuleName: currentMod, Checked: 0, Total: totalCount, StatusMessage: "Counting"}
 		// Perform full query
-		query, err := gojq.Parse(s3PublicQuery)
+		accessKeyAgeQuery, err := gojq.Parse(AccessKeyAgeAffectedQueryString)
 		if err != nil {
-			m.moduleErrChan <- ModuleErrMsg{ModuleName: currentModName, ErrorMessage: "publicQuery Parse: " + err.Error()}
-			continue
+			m.moduleErrChan <- ModuleErrMsg{ModuleName: currentMod, ErrorMessage: "accessKeyAgeQuery Parse: " + err.Error()}
+
 		}
 
-		iter := query.Run(jsonData)
+		accessKeyIter := accessKeyAgeQuery.Run(jsonData)
 		checkedCount := 0
 		for {
-			v, ok := iter.Next()
+			v, ok := accessKeyIter.Next()
 			if !ok {
 				break
 			}
 			if err, isErr := v.(error); isErr {
-				m.moduleErrChan <- ModuleErrMsg{ModuleName: currentModName, ErrorMessage: "query iter: " + err.Error()}
+				m.moduleErrChan <- ModuleErrMsg{ModuleName: currentMod, ErrorMessage: "accessKeyAgeQuery iter: " + err.Error()}
 				return nil
 			}
-			m.moduleProgressChan <- ModuleProgressMsg{ModuleName: currentModName, Checked: checkedCount, Total: totalCount, StatusMessage: fmt.Sprintf("v: %v", v)}
+			m.moduleProgressChan <- ModuleProgressMsg{ModuleName: currentMod, Checked: checkedCount, Total: totalCount, StatusMessage: fmt.Sprintf("v: %v", v)}
+			time.Sleep(2 * time.Second)
 			checkedCount++
 		}
 		currentReportNum++
 	}
-
-	m.moduleDoneChan <- ModuleCompleteMsg{ModuleName: currentModName}
+	m.moduleDoneChan <- ModuleCompleteMsg{ModuleName: currentMod}
 	return nil
 }
 
-// func OpenS3(moduleName string, moduleProgressChan chan<- ModuleProgressMsg, moduleDoneChan chan<- ModuleCompleteMsg) tea.Cmd {
-// 	return func() tea.Msg {
-// 		totalBuckets := 10 // Dummy value for total buckets
-// 		for i := 1; i <= totalBuckets; i++ {
-// 			time.Sleep(time.Second) // Simulate delay
-// 			//println("Checking bucket", i, "in module", moduleName)
-// 			f, err := os.OpenFile("s3progress.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-// 			if err != nil {
-// 				log.Fatal(err)
-// 			}
-// 			defer f.Close()
+// func S3ScoutQuery(m *model, currentMod string, reportFiles []string, numReports int) error {
+// 	jsonDataList := make([]interface{}, 0, len(reportFiles))
 
-// 			if _, err := f.Write([]byte("Sending Progress message\n")); err != nil {
-// 				log.Fatal(err)
-// 			}
-
-// 			moduleProgressChan <- ModuleProgressMsg{ModuleName: moduleName, Checked: i, Total: totalBuckets}
+// 	for _, file := range reportFiles {
+// 		m.moduleDebugChan <- DebugMsg{Message: "Processing file: " + file}
+// 		time.Sleep(2 * time.Second)
+// 		jsonData, err := preprocessFile(file)
+// 		if err != nil {
+// 			m.moduleDebugChan <- DebugMsg{Message: err.Error()}
+// 			continue
 // 		}
-// 		moduleDoneChan <- ModuleCompleteMsg{ModuleName: moduleName}
-// 		return nil
+// 		jsonDataList = append(jsonDataList, jsonData)
 // 	}
+// 	m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Finished Processing %d reports", len(reportFiles))}
+// 	for _, jsonData := range jsonDataList {
+// 		if jsonData == nil {
+// 			m.moduleDebugChan <- DebugMsg{Message: "jsonData is nil, skipping"}
+// 			time.Sleep(2 * time.Second)
+// 			continue
+// 		}
+// 	}
+// 	//time.Sleep(2 * time.Second)
+// 	// var cmds []tea.Cmd
+
+// 	for _, jsonData := range jsonDataList {
+
+// 		m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Running module %s", currentMod)}
+// 		currentReportNum := 1
+
+// 		time.Sleep(2 * time.Second) // Simulate delay
+
+// 		s3PublicQuery := "."
+
+// 		m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Checking report number %d of %d", currentReportNum, numReports)}
+// 		// Execute the counting query
+// 		countQuery, err := gojq.Parse(s3PublicQuery)
+// 		if err != nil {
+// 			m.moduleErrChan <- ModuleErrMsg{ModuleName: currentMod, ErrorMessage: "countQuery Parse: " + err.Error()}
+// 			time.Sleep(3 * time.Second)
+
+// 		}
+
+// 		countIter := countQuery.Run(jsonData)
+// 		totalCount := 0
+// 		for {
+// 			_, ok := countIter.Next()
+// 			if !ok {
+// 				break
+// 			}
+// 			totalCount++
+// 			m.moduleProgressChan <- ModuleProgressMsg{ModuleName: currentMod, Checked: 0, Total: totalCount, StatusMessage: "Counting"}
+// 		}
+
+// 		// Perform full query
+// 		query, err := gojq.Parse(s3PublicQuery)
+// 		if err != nil {
+// 			m.moduleErrChan <- ModuleErrMsg{ModuleName: currentMod, ErrorMessage: "publicQuery Parse: " + err.Error()}
+
+// 		}
+
+// 		s3Iter := query.Run(jsonData)
+// 		checkedCount := 0
+// 		for {
+// 			v, ok := s3Iter.Next()
+// 			if !ok {
+// 				break
+// 			}
+// 			if err, isErr := v.(error); isErr {
+// 				m.moduleErrChan <- ModuleErrMsg{ModuleName: currentMod, ErrorMessage: "query iter: " + err.Error()}
+// 				return nil
+// 			}
+// 			m.moduleProgressChan <- ModuleProgressMsg{ModuleName: currentMod, Checked: checkedCount, Total: totalCount, StatusMessage: fmt.Sprintf("v: %v", v)}
+// 			checkedCount++
+// 		}
+// 		currentReportNum++
+// 	}
+// 	m.moduleDoneChan <- ModuleCompleteMsg{ModuleName: currentMod}
+// 	return nil
 // }
+
+func OpenS3(moduleName string, moduleProgressChan chan<- ModuleProgressMsg, moduleDoneChan chan<- ModuleCompleteMsg) tea.Cmd {
+
+	totalBuckets := 10 // Dummy value for total buckets
+	for i := 1; i <= totalBuckets; i++ {
+		time.Sleep(time.Second) // Simulate delay
+		//println("Checking bucket", i, "in module", moduleName)
+		f, err := os.OpenFile("s3progress.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer f.Close()
+
+		if _, err := f.Write([]byte("Sending Progress message\n")); err != nil {
+			log.Fatal(err)
+		}
+
+		moduleProgressChan <- ModuleProgressMsg{ModuleName: moduleName, Checked: i, Total: totalBuckets}
+	}
+	moduleDoneChan <- ModuleCompleteMsg{ModuleName: moduleName}
+	return nil
+
+}
 
 func checkRegionBuckets(regionName string) {
 	sess, err := session.NewSession(&aws.Config{
