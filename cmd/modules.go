@@ -100,63 +100,52 @@ func ModuleRunner(m *model) tea.Cmd {
 }
 
 func AccesKeyScoutQuery(m *model, currentMod string, reportFiles []string, numReports int) error {
-	// var affectedAssets int
-	jsonDataList := make([]interface{}, 0, len(reportFiles))
-	// i think maybe i should wrap everything in the for loop, or find an easier way to separate multiple reports
-	for _, file := range reportFiles {
-		m.moduleDebugChan <- DebugMsg{Message: "Processing file: " + file}
-		//time.Sleep(2 * time.Second)
-		jsonData, err := preprocessFile(file)
-		if err != nil {
-			m.moduleDebugChan <- DebugMsg{Message: err.Error()}
-			continue
-		}
-		jsonDataList = append(jsonDataList, jsonData)
-	}
-	m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Finished Processing %d reports", len(reportFiles))}
-	for _, jsonData := range jsonDataList {
-		if jsonData == nil {
-			m.moduleDebugChan <- DebugMsg{Message: "jsonData is nil, skipping"}
-			time.Sleep(2 * time.Second)
-			continue
-		}
-	}
+
+	jsonDataList := openJsonFiles(m, reportFiles)
 	//time.Sleep(2 * time.Second)
-	//var cmds []tea.Cmd
+
+	//loop through reports
 	currentReportNum := 1
 	for _, jsonData := range jsonDataList {
 
 		m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Running module %s", currentMod)}
 
-		//time.Sleep(2 * time.Second)
-
+		//Query string for the Active Access Key Age > 90 days
 		AccessKeyAgeAffectedQueryString := ".services.iam.findings[\"iam-user-no-Active-key-rotation\"].items"
 
 		m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Checking report number %d of %d", currentReportNum, numReports)}
 
 		// Gets the locations of the affected assets for the Access Key Age
 		findingAssetIDS := jqFindings(m, jsonData, currentMod, AccessKeyAgeAffectedQueryString)
-		// iterate over the slice of asset IDS
 
-		// transform the asset IDS into a path that can be used to query the json data
+		// transforms each asset ID into a path that can be used to query the json data
 		var affectedAssetsKeyIDs []string
+		var affectedAssetsKeyUser []string
 		checkedAssets := 0
 		for _, id := range findingAssetIDS {
 
+			//makes access key id query string from the affected asset
 			affectedKeyIDpath := (".services" + transformPath(id) + ".AccessKeyId")
+			affectedKeyUserNamepath := (".services" + transformPath(id) + ".UserName")
+
 			m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Transformed Path: %s", affectedKeyIDpath)}
 			//time.Sleep(2 * time.Second)
 			// Query the json data for the specific assets
 			accessKeyID := jqAssets(m, jsonData, currentMod, affectedKeyIDpath)
+			accessKeyUserName := jqAssets(m, jsonData, currentMod, affectedKeyUserNamepath)
 
-			//add the Access Key ID string to the slice
+			//add the info to the slices
 			affectedAssetsKeyIDs = append(affectedAssetsKeyIDs, accessKeyID)
+			affectedAssetsKeyUser = append(affectedAssetsKeyUser, accessKeyUserName)
 
 			checkedAssets++
 			m.moduleProgressChan <- ModuleProgressMsg{ModuleName: currentMod, Checked: checkedAssets, StatusMessage: "Checking " + accessKeyID}
 
 		}
-		m.moduleProgressChan <- ModuleProgressMsg{ModuleName: currentMod, Checked: checkedAssets, StatusMessage: fmt.Sprintf("Finished: %v", affectedAssetsKeyIDs)}
+
+		// Should update the model in the update function perhaps
+
+		m.moduleProgressChan <- ModuleProgressMsg{ModuleName: currentMod, Checked: checkedAssets, StatusMessage: fmt.Sprintf("Finished: %v %v", affectedAssetsKeyIDs, affectedAssetsKeyUser)}
 		m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Affected Assets: %v", affectedAssetsKeyIDs)}
 
 		//m.moduleProgressChan <- ModuleProgressMsg{ModuleName: currentMod, Checked: checkedCount, Total: totalCount}
@@ -234,6 +223,7 @@ func jqFindings(m *model, jsonData interface{}, currentMod string, findingQueryS
 	return results
 }
 
+// This function pulls the value from the id of the affected assets from the finding's affected asset path based on the transformed function
 func jqAssets(m *model, jsonData interface{}, currentMod string, findingQueryString string) string {
 
 	// Parse the string to create a gojq query
@@ -280,6 +270,33 @@ func jqAssets(m *model, jsonData interface{}, currentMod string, findingQueryStr
 
 	}
 	return results
+}
+
+func openJsonFiles(m *model, reportFiles []string) []interface{} {
+	// var affectedAssets int
+	//
+	jsonDataList := make([]interface{}, 0, len(reportFiles))
+	// i think maybe i should wrap everything in the for loop, or find an easier way to separate multiple reports
+	for _, file := range reportFiles {
+		m.moduleDebugChan <- DebugMsg{Message: "Processing file: " + file}
+		//time.Sleep(2 * time.Second)
+		jsonData, err := preprocessFile(file)
+		if err != nil {
+			m.moduleDebugChan <- DebugMsg{Message: err.Error()}
+			continue
+		}
+		jsonDataList = append(jsonDataList, jsonData)
+	}
+	m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Finished Processing %d reports", len(reportFiles))}
+	for _, jsonData := range jsonDataList {
+		if jsonData == nil {
+			m.moduleDebugChan <- DebugMsg{Message: "jsonData is nil, skipping"}
+			time.Sleep(2 * time.Second)
+			continue
+		}
+	}
+
+	return jsonDataList
 }
 
 // func S3ScoutQuery(m *model, currentMod string, reportFiles []string, numReports int) error {
