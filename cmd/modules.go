@@ -181,7 +181,7 @@ func AccesKeyScoutQuery(m *model, currentMod string, reportFiles []string, numRe
 				keyval = fmt.Sprintf("%v", value)
 				transformedPath := transformPath(keyval)
 				m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Transformed Path: %s", transformedPath)}
-				time.Sleep(1 * time.Second)
+				//time.Sleep(1 * time.Second)
 				if err != nil {
 					m.DebugMsgText = err.Error()
 				} else {
@@ -218,7 +218,7 @@ func AccesKeyScoutQuery(m *model, currentMod string, reportFiles []string, numRe
 
 			checkedCount++
 			//m.moduleProgressChan <- ModuleProgressMsg{ModuleName: currentMod, Checked: checkedCount, Total: totalCount}
-			time.Sleep(2 * time.Second)
+			// time.Sleep(2 * time.Second)
 
 		}
 		currentReportNum++
