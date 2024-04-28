@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -159,10 +160,10 @@ func AccesKeyScoutQuery(m *model, currentMod string, reportFiles []string, numRe
 
 		}
 
-		accessKeyIter := accessKeyAgeQuery.Run(jsonData)
+		accessKeyAgeIter := accessKeyAgeQuery.Run(jsonData)
 		checkedCount := 0
 		for {
-			v, ok := accessKeyIter.Next()
+			v, ok := accessKeyAgeIter.Next()
 			if !ok {
 				break
 			}
@@ -177,11 +178,46 @@ func AccesKeyScoutQuery(m *model, currentMod string, reportFiles []string, numRe
 			for _, value := range v.([]interface{}) {
 
 				//Here's where I'm going to make another query to get more info on the key
-				keyval += fmt.Sprintf("%v,", value)
+				keyval = fmt.Sprintf("%v", value)
+				transformedPath := transformPath(keyval)
+				m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Transformed Path: %s", transformedPath)}
+				time.Sleep(1 * time.Second)
+				if err != nil {
+					m.DebugMsgText = err.Error()
+				} else {
+					accessKeyAgeAssetQuery, err := gojq.Parse(".services" + transformedPath + ".AccessKeyId")
+					m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("accessKeyAgeAssetQuery: %s", accessKeyAgeAssetQuery)}
+					if err != nil {
+						m.moduleErrChan <- ModuleErrMsg{ModuleName: currentMod, ErrorMessage: "accessKeyAgeAssetQuery Parse: " + err.Error()}
+
+					} else {
+						accessKeyAgeAssetIter := accessKeyAgeAssetQuery.Run(jsonData)
+						for {
+							x, ok := accessKeyAgeAssetIter.Next()
+							if !ok {
+								break
+							}
+							if err, isErr := x.(error); isErr {
+								m.moduleErrChan <- ModuleErrMsg{ModuleName: currentMod, ErrorMessage: "accessKeyAgeAssetQuery iter: " + err.Error()}
+								return nil
+							}
+							affectedAssets := []string{fmt.Sprintf("%v", x)}
+
+							// create a new string, assigning the value of each slice to the string
+							assetString := strings.Join(affectedAssets, ", ")
+							m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Affected Assets: %v", affectedAssets[0])}
+
+							//m.moduleDebugChan <- DebugMsg{Message: fmt.Sprintf("Affected Assets: %s", x)}
+							m.moduleProgressChan <- ModuleProgressMsg{ModuleName: currentMod, Checked: checkedCount, Total: totalCount, StatusMessage: assetString}
+
+						}
+					}
+				}
+
 			}
 
 			checkedCount++
-			m.moduleProgressChan <- ModuleProgressMsg{ModuleName: currentMod, Checked: checkedCount, Total: totalCount, StatusMessage: keyval}
+			//m.moduleProgressChan <- ModuleProgressMsg{ModuleName: currentMod, Checked: checkedCount, Total: totalCount}
 			time.Sleep(2 * time.Second)
 
 		}
@@ -380,4 +416,22 @@ func preprocessFile(filePath string) (interface{}, error) {
 		return nil, err
 	}
 	return jsonObj, nil
+}
+
+func transformPath(input string) string {
+	parts := strings.Split(input, ".")
+	result := ""
+	for i, part := range parts {
+		if num, err := strconv.Atoi(part); err == nil {
+			// If it's a number, convert to bracket notation
+			result += fmt.Sprintf("[%d]", num)
+		} else {
+			// For normal string parts, add with a leading dot if it's not the first element
+			if i > 0 {
+				result += "."
+			}
+			result += part
+		}
+	}
+	return "." + result // Ensure the result starts with a dot
 }
