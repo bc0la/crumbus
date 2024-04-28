@@ -171,6 +171,9 @@ func AccesKeyScoutQuery(m *model, currentMod string, reportFiles []string, numRe
 				m.moduleErrChan <- ModuleErrMsg{ModuleName: currentMod, ErrorMessage: "accessKeyAgeQuery iter: " + err.Error()}
 				return nil
 			}
+
+			//set statusMessage to the value of the key
+
 			checkedCount++
 			m.moduleProgressChan <- ModuleProgressMsg{ModuleName: currentMod, Checked: checkedCount, Total: totalCount, StatusMessage: fmt.Sprintf("v: %v", v)}
 			time.Sleep(2 * time.Second)

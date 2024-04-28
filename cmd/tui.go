@@ -677,28 +677,35 @@ func (m *model) updateExecuteChecks(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.Loaded {
 			targetProgress := float64(m.TotalDone) / float64(m.TotalChecks)
 
-			// Check if current progress is less than the target, if so animate it
+			// Calculate the direction and amount to move the progress
+			progressDelta := (targetProgress - m.Progress) * animationSpeed
+
+			// Check the direction of the animation
 			if m.Progress < targetProgress {
-				// Interpolate between current progress and target progress
-				m.Progress += (targetProgress - m.Progress) * animationSpeed
-
-				// Check if the progress is close enough to the target to consider it complete
-				if math.Abs(m.Progress-targetProgress) < 0.01 {
-					m.Progress = targetProgress // Snap to final value to avoid floating-point precision issues
+				m.Progress += progressDelta
+				if m.Progress > targetProgress {
+					m.Progress = targetProgress // Correct overshooting
 				}
-
-				return m, frame() // Continue animating
+			} else if m.Progress > targetProgress {
+				m.Progress += progressDelta
+				if m.Progress < targetProgress {
+					m.Progress = targetProgress // Correct undershooting
+				}
 			}
 
-			// Once we reach or exceed the target progress, we consider the loading complete
-			if m.Progress >= 1 {
-				m.Progress = 1
-				m.Loaded = true
-				return m, nil // Stop the animation
+			// Check if the progress is close enough to the target to consider it complete
+			if math.Abs(m.Progress-targetProgress) < 0.01 {
+				m.Progress = targetProgress // Snap to final value to avoid floating-point precision issues
 			}
 
+			// Continue animating until the target progress is exactly met
 			return m, frame()
+		} else if m.pwndocAllDone {
+			m.Loaded = true
+			return m, nil // Stop the animation once all processing is complete
 		}
+
+		return m, nil
 
 	case ModuleProgressMsg:
 		//log to file that msg was received
@@ -1048,7 +1055,7 @@ func executionView(m model) string {
 		} else if mod.Selected && !mod.Complete {
 			b.WriteString(m.spinner.View() + fmt.Sprintf(" %s: %d/%d - %s", mod.Name, mod.Checked, mod.Total, mod.StatusMessage) + "\n")
 		} else if mod.Selected && mod.Complete {
-			b.WriteString(fmt.Sprintf("✅ %s: Complete", mod.Name) + "\n")
+			b.WriteString(fmt.Sprintf("✅ %s: Complete - %s", mod.Name, mod.StatusMessage) + "\n")
 			// find a better way to do this
 		} else {
 			b.WriteString(fmt.Sprintf("❌ %s: Not selected", mod.Name) + "\n")
