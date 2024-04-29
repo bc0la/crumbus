@@ -390,7 +390,7 @@ func openJsonFiles(m *model, reportFiles []string) []interface{} {
 
 func OpenS3(moduleName string, moduleProgressChan chan<- ModuleProgressMsg, moduleDoneChan chan<- ModuleCompleteMsg) tea.Cmd {
 
-	totalBuckets := 4 // Dummy value for total buckets
+	totalBuckets := 1 // Dummy value for total buckets
 	for i := 1; i <= totalBuckets; i++ {
 		time.Sleep(time.Second) // Simulate delay
 		//println("Checking bucket", i, "in module", moduleName)

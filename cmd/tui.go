@@ -98,6 +98,7 @@ func frame() tea.Cmd {
 type configUpdatedMsg struct {
 	ConfigVars struct {
 		PwndocUrl            string
+		PwndocAuditName      string
 		OutputDir            string
 		ScoutSuiteReportsDir string
 		AwsAccessKey         string
@@ -111,14 +112,17 @@ type AffectedAsset struct {
 	Name string
 }
 type Module struct {
-	Name           string
-	Selected       bool
-	Checked        int
-	Total          int
-	Complete       bool
-	Errored        bool
-	StatusMessage  string
-	AffectedAssets []AffectedAsset
+	Name                       string
+	Selected                   bool
+	Checked                    int
+	Total                      int
+	Complete                   bool
+	Errored                    bool
+	StatusMessage              string
+	AffectedAssets             []AffectedAsset
+	Uploaded                   bool
+	AffectedAmountSearchString string
+	AffectedAssetsSearchString string
 }
 
 type model struct {
@@ -161,6 +165,7 @@ type model struct {
 	// Config vars for config.json/tool configuration
 	ConfigVars struct {
 		PwndocUrl            string
+		PwndocAuditName      string
 		OutputDir            string
 		ScoutSuiteReportsDir string
 		AwsAccessKey         string
@@ -184,6 +189,8 @@ type model struct {
 
 	Loaded        bool
 	pwndocAllDone bool
+	doneUploading bool
+	Uploading     bool
 }
 
 type configWrittenMsg struct{}
@@ -195,6 +202,7 @@ type errMsg struct {
 func initialModel() model {
 	var configVars = struct {
 		PwndocUrl            string
+		PwndocAuditName      string
 		OutputDir            string
 		ScoutSuiteReportsDir string
 		AwsAccessKey         string
@@ -203,6 +211,7 @@ func initialModel() model {
 		TestValue            string
 	}{
 		PwndocUrl:            "https://192.168.1.51:8443",
+		PwndocAuditName:      "test",
 		OutputDir:            "/home/username/crumbus/outputs",
 		ScoutSuiteReportsDir: "~/op/recon/cloud/scout",
 		AwsAccessKey:         "",
@@ -250,7 +259,7 @@ func initialModel() model {
 			{Name: "Guided Checks", Selected: true, Complete: false},
 		},
 		PwndocModules: []Module{
-			{Name: "Access Key Age/Last Used", Selected: false, Complete: false},
+			{Name: "Access Key Age/Last Used", Selected: false, Complete: false, AffectedAmountSearchString: "%KEYS_AGE_AFFECTED_AMOUNT%", AffectedAssetsSearchString: "%KEYS_AGE_AFFECTED_ASSETS%"},
 			{Name: "Open S3 Buckets (Authenticated/Anonymous)", Selected: false, Checked: 0, Total: 0, Complete: false},
 			{Name: "IMDSv1", Selected: false, Complete: true},
 			{Name: "Public RDS", Selected: false, Complete: true},
@@ -369,6 +378,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	} else if m.Executing {
 		m, cmd := m.updateExecuteChecks(msg)
+		return m, cmd
+	} else if m.Uploading {
+		m, cmd := m.updateUpload(msg)
 		return m, cmd
 	} else {
 		return m, tea.Quit
@@ -671,6 +683,7 @@ func (m *model) updateExecuteChecks(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// if _, err := f.Write([]byte("In Execute")); err != nil {
 	// 	log.Fatal(err)
 	// }
+
 	switch msg := msg.(type) {
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -679,6 +692,29 @@ func (m *model) updateExecuteChecks(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "enter":
+			if m.pwndocAllDone {
+
+				m.Executing = false
+				m.Uploading = true
+
+				//reset the values used to track progress
+				for i := range m.PwndocModules {
+					m.PwndocModules[i].Checked = 0
+					m.PwndocModules[i].Total = 0
+
+				}
+
+				var cmds []tea.Cmd
+				cmds = append(cmds, frame())
+				cmds = append(cmds, m.spinner.Tick)
+				cmds = append(cmds, PwndocUploader(m))
+				return m, tea.Batch(cmds...)
+
+			}
+		}
 	case frameMsg:
 		if !m.Loaded {
 			targetProgress := float64(m.TotalDone) / float64(m.TotalChecks)
@@ -797,6 +833,152 @@ func (m *model) updateExecuteChecks(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *model) updateUpload(msg tea.Msg) (tea.Model, tea.Cmd) {
+	const animationSpeed = 0.20
+	// f, err := os.OpenFile("s3progress.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	// defer f.Close()
+
+	// if _, err := f.Write([]byte("In Execute")); err != nil {
+	// 	log.Fatal(err)
+	// }
+	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+	}
+
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "enter":
+			if m.doneUploading {
+
+				return m, nil
+
+			}
+		}
+	case frameMsg:
+		if !m.Loaded {
+			targetProgress := float64(m.TotalDone) / float64(m.TotalChecks)
+
+			// Calculate the direction and amount to move the progress
+			progressDelta := (targetProgress - m.Progress) * animationSpeed
+
+			// Check the direction of the animation
+			if m.Progress < targetProgress {
+				m.Progress += progressDelta
+				if m.Progress > targetProgress {
+					m.Progress = targetProgress // Correct overshooting
+				}
+			} else if m.Progress > targetProgress {
+				m.Progress += progressDelta
+				if m.Progress < targetProgress {
+					m.Progress = targetProgress // Correct undershooting
+				}
+			}
+
+			// Check if the progress is close enough to the target to consider it complete
+			if math.Abs(m.Progress-targetProgress) < 0.01 {
+				m.Progress = targetProgress // Snap to final value to avoid floating-point precision issues
+			}
+
+			// Continue animating until the target progress is exactly met
+			return m, frame()
+		} else if m.pwndocAllDone {
+			m.Loaded = true
+			return m, nil // Stop the animation once all processing is complete
+		}
+
+		return m, nil
+
+	case ModuleProgressMsg:
+		//log to file that msg was received
+		// f, err := os.OpenFile("s3progress.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		// if err != nil {
+		// 	log.Fatal(err)
+		// }
+		// defer f.Close()
+
+		// if _, err := f.Write([]byte("Received Progress message\n")); err != nil {
+		// 	log.Fatal(err)
+		// }
+		m.TotalChecks = 0
+		m.TotalDone = 0
+		for i, mod := range m.PwndocModules {
+			if mod.Name == msg.ModuleName {
+				//if nil, dont set anything
+				if msg.Checked > 0 {
+					m.PwndocModules[i].Checked = msg.Checked
+				}
+				if msg.Total > 0 {
+					m.PwndocModules[i].Total = msg.Total
+				}
+				if msg.StatusMessage != "" {
+
+					m.PwndocModules[i].StatusMessage = msg.StatusMessage
+				}
+
+				// i think this may cause issues. should maybe set total checks/total done outside/after the if statement bsed on m.PwndocModules[i].Total That should be all
+
+			}
+			m.TotalChecks += m.PwndocModules[i].Total
+			m.TotalDone += m.PwndocModules[i].Checked
+
+		}
+
+		return m, moduleProgressListen(m.moduleProgressChan)
+
+	case ModuleCompleteMsg:
+		m.pwndocAllDone = true
+		for i, mod := range m.PwndocModules {
+			if mod.Name == msg.ModuleName {
+				m.PwndocModules[i].Uploaded = true
+
+				// will need to make a loop that goes over all active modules eventually
+
+			}
+
+			//set alldone to false if any module is not complete
+			if !m.PwndocModules[i].Uploaded {
+				m.doneUploading = false
+			}
+		}
+
+		// m.pwndocAllDone = true
+		return m, moduleDoneListen(m.moduleDoneChan)
+
+	case ModuleErrMsg:
+
+		for i, mod := range m.PwndocModules {
+			if mod.Name == msg.ModuleName {
+				m.PwndocModules[i].StatusMessage = msg.ErrorMessage
+				m.PwndocModules[i].Errored = true
+
+			}
+
+		}
+		return m, moduleErrListen(m.moduleErrChan)
+
+	case DebugMsg:
+		m.DebugMsgText = msg.Message
+		return m, debugListen(m.moduleDebugChan)
+
+	case ModuleAffectedAssetMsg:
+		for i, mod := range m.PwndocModules {
+			if mod.Name == msg.ModuleName {
+				m.PwndocModules[i].AffectedAssets = append(m.PwndocModules[i].AffectedAssets, msg.AffectedAsset)
+			}
+		}
+
+		// Handle other messages or commands specific to execution
+	}
+	return m, nil
+}
+
 // The main view, which just calls the appropriate sub-view
 func (m model) View() string {
 	var s string
@@ -818,6 +1000,8 @@ func (m model) View() string {
 		s = subModulesReviewView(m)
 	} else if m.Executing {
 		s = executionView(m)
+	} else if m.Uploading {
+		s = uploadView(m)
 	} else {
 		s = "Press any key to exit"
 	}
@@ -1136,7 +1320,59 @@ func executionView(m model) string {
 	b.WriteString("\n\n")
 	b.WriteString(progressbar(m.Progress) + "\n\n")
 	b.WriteString(m.DebugMsgText + "\n")
-	b.WriteString(subtleStyle.Render("Press q or esc to quit"))
+	b.WriteString(subtleStyle.Render("Press q or esc to quit"+dotStyle) + "Press enter to continue once all checks are complete")
+
+	return b.String()
+}
+func uploadView(m model) string {
+	var b strings.Builder
+
+	if !m.doneUploading {
+		b.WriteString("\n" + m.spinner.View() + " Uploading please wait...\n\n")
+	} else {
+		b.WriteString("\n✅ Crumbus complete\n\n")
+	}
+
+	// display progress checked/total for Pwndoc checks
+	//if m.ModuleSelection[0].Selected {
+
+	b.WriteString("Pwndoc Checks:\n")
+	for _, mod := range m.PwndocModules {
+
+		affectedAssetsDescription := formatAssets(mod.AffectedAssets)
+
+		if mod.Errored {
+			b.WriteString(fmt.Sprintf("❌ %s: %s", mod.Name, mod.StatusMessage) + "\n")
+
+		} else if mod.Selected && !mod.Uploaded {
+			b.WriteString(m.spinner.View() + fmt.Sprintf(" %s: %d/%d - %s", mod.Name, mod.Checked, mod.Total, mod.StatusMessage) + "\n")
+			// } else if mod.Selected && mod.Uploaded {
+			// Bell pepper emoji if mod.Total > 0
+			//	if mod.Total > 0 {
+			//Should use something other than mod.Total, in case of non scoutsuite checks. Total is fine for those. Add affected assets to the model likely and get a count from there.
+			//		b.WriteString(fmt.Sprintf("🫑 %s: Uploaded - %d Affected Assets!: %s", mod.Name, mod.Total, affectedAssetsDescription) + "\n")
+
+			// find a better way to do this
+		} else if !mod.Selected {
+			b.WriteString(fmt.Sprintf("❌ %s: Not selected", mod.Name) + "\n")
+
+		} else {
+			b.WriteString(fmt.Sprintf("✅ %s: Uploaded - %s", mod.Name, affectedAssetsDescription) + "\n")
+		}
+
+	}
+
+	//}
+
+	// display progress checked/total for Non Pwndoc checks
+	// may be easier to make a new var
+	//if no modules are selected,
+
+	b.WriteString(fmt.Sprintf("Total: %d/%d", m.TotalDone, m.TotalChecks))
+	b.WriteString("\n\n")
+	b.WriteString(progressbar(m.Progress) + "\n\n")
+	b.WriteString(m.DebugMsgText + "\n")
+	b.WriteString(subtleStyle.Render("Press q or esc to quit"+dotStyle) + "Press enter to continue once all checks are complete")
 
 	return b.String()
 }
