@@ -57,7 +57,7 @@ func PwndocUploader(m *model) tea.Cmd {
 						m.moduleDebugChan <- DebugMsg{"Screenshot uploaded: " + screenshotString}
 						time.Sleep(5 * time.Second)
 						go uploadAttackNarrative(*pwndocApi, m, audit, module, screenshotString)
-						go createNewFinding(*pwndocApi, m, audit, module)
+						go createNewFinding(*pwndocApi, m, audit, module, screenshotString)
 
 					}
 				}
@@ -199,7 +199,7 @@ func uploadAttackNarrative(pwndocApi pwndoc.API, m *model, audit pwndoc.APIAudit
 	m.moduleDoneChan <- ModuleCompleteMsg{ModuleName: "Attack Narrative"}
 }
 
-func createNewFinding(pwndocApi pwndoc.API, m *model, audit pwndoc.APIAudit, currentModule Module) {
+func createNewFinding(pwndocApi pwndoc.API, m *model, audit pwndoc.APIAudit, currentModule Module, screenshotString string) {
 	// Create a new finding for the attack narrative
 	m.moduleDebugChan <- DebugMsg{"Creating new finding for " + audit.Name}
 	time.Sleep(1 * time.Second)
@@ -242,6 +242,9 @@ func createNewFinding(pwndocApi pwndoc.API, m *model, audit pwndoc.APIAudit, cur
 				detail.Observation = strings.ReplaceAll(detail.Observation, searchString, replacement)
 				detail.Observation = strings.ReplaceAll(detail.Observation, assetString, replacementAssets)
 
+				//should move the instructions to a var in the module def
+				proofsString := "<ul><li><p>Examine this cat:</p></li></ul><img class=\"custom-image\" src=\"" + screenshotString + "\" alt=\"cat.jpg\">"
+
 				newFinding := pwndoc.APIFindingDetails{
 					Title:       detail.Title,
 					VulnType:    detail.VulnType,
@@ -252,6 +255,7 @@ func createNewFinding(pwndocApi pwndoc.API, m *model, audit pwndoc.APIAudit, cur
 					CVSSv3:      vuln.CVSSv3,
 					Category:    vuln.Category,
 					Scope:       replacementAssets,
+					Poc:         proofsString,
 					//Upload screenshot before this
 					//Poc:         proofsDerections + uploadscreenshot(pwndocApi, m, audit, currentModule),
 				}
@@ -278,6 +282,18 @@ func createNewFinding(pwndocApi pwndoc.API, m *model, audit pwndoc.APIAudit, cur
 					m.moduleDebugChan <- DebugMsg{fmt.Sprintf("Error writing to file: %s", err.Error())}
 					time.Sleep(3 * time.Second)
 				}
+
+				// retrievedAuditInformation, err := pwndocApi.GetAudit(audit.ID)
+				// if err != nil {
+				// 	m.moduleDebugChan <- DebugMsg{fmt.Sprintf("Unable to retrieve audit information: %s", err.Error())}
+				// 	time.Sleep(3 * time.Second)
+				// }
+				// for _, finding := range retrievedAuditInformation.Data.Findings {
+				// 	if finding.Title == detail.Title {
+				// 		updatedFinding := pwndoc.APIFindingDetails{
+				// 			Identifier: finding.Identifier,
+				// 			Title:      finding.Title,
+				// 			VulnType:   finding.VulnType,
 
 			}
 		}
