@@ -14,9 +14,6 @@ import (
 
 	"encoding/json"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/itchyny/gojq"
 )
@@ -88,7 +85,7 @@ func ModuleRunner(m *model) tea.Cmd {
 
 		for _, module := range m.PwndocModules {
 			if module.Selected && module.Name == "Access Key Age/Last Used" {
-				go AccesKeyScoutQuery(m, module.Name, reportFiles, len(reportFiles))
+				go AccessKeyScoutQuery(m, module.Name, reportFiles, len(reportFiles))
 			}
 
 			if module.Selected && module.Name == "Open S3 Buckets (Authenticated/Anonymous)" {
@@ -104,7 +101,7 @@ func ModuleRunner(m *model) tea.Cmd {
 	}
 }
 
-func AccesKeyScoutQuery(m *model, currentMod string, reportFiles []string, numReports int) error {
+func AccessKeyScoutQuery(m *model, currentMod string, reportFiles []string, numReports int) error {
 
 	jsonDataList := openJsonFiles(m, reportFiles)
 	//time.Sleep(2 * time.Second)
@@ -424,39 +421,39 @@ func OpenS3(moduleName string, moduleProgressChan chan<- ModuleProgressMsg, modu
 
 }
 
-func checkRegionBuckets(regionName string) {
-	sess, err := session.NewSession(&aws.Config{
-		Region: aws.String(regionName),
-	})
-	if err != nil {
-		fmt.Println("Error creating session for region", regionName, ":", err)
-		return
-	}
+// func checkRegionBuckets(regionName string) {
+// 	sess, err := session.NewSession(&aws.Config{
+// 		Region: aws.String(regionName),
+// 	})
+// 	if err != nil {
+// 		fmt.Println("Error creating session for region", regionName, ":", err)
+// 		return
+// 	}
 
-	svc := s3.New(sess)
-	result, err := svc.ListBuckets(nil)
-	if err != nil {
-		fmt.Println("Error listing buckets in region", regionName, ":", err)
-		return
-	}
+// 	svc := s3.New(sess)
+// 	result, err := svc.ListBuckets(nil)
+// 	if err != nil {
+// 		fmt.Println("Error listing buckets in region", regionName, ":", err)
+// 		return
+// 	}
 
-	for _, bucket := range result.Buckets {
-		go checkBucketAccess(svc, *bucket.Name)
-	}
-}
+// 	for _, bucket := range result.Buckets {
+// 		go checkBucketAccess(svc, *bucket.Name)
+// 	}
+// }
 
-func checkBucketAccess(svc *s3.S3, bucketName string) {
-	input := &s3.ListObjectsInput{
-		Bucket: aws.String(bucketName),
-	}
+// func checkBucketAccess(svc *s3.S3, bucketName string) {
+// 	input := &s3.ListObjectsInput{
+// 		Bucket: aws.String(bucketName),
+// 	}
 
-	_, err := svc.ListObjects(input)
-	if err != nil {
-		fmt.Println("Bucket not accessible anonymously:", bucketName)
-	} else {
-		fmt.Println("Bucket accessible anonymously:", bucketName)
-	}
-}
+// 	_, err := svc.ListObjects(input)
+// 	if err != nil {
+// 		fmt.Println("Bucket not accessible anonymously:", bucketName)
+// 	} else {
+// 		fmt.Println("Bucket accessible anonymously:", bucketName)
+// 	}
+// }
 
 func moduleProgressListen(moduleProgressChan chan ModuleProgressMsg) tea.Cmd {
 	return func() tea.Msg {

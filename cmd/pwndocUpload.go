@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"strconv"
@@ -323,7 +322,8 @@ func takeUploadScreenshot(pwndocApi pwndoc.API, m *model, audit pwndoc.APIAudit,
 	if currentModule.Name == "Access Key Age/Last Used" {
 		m.moduleDebugChan <- DebugMsg{"Found Access Key Age/Last Used"}
 	}
-	imageData, err := ioutil.ReadFile("/tmp/accesskeyage.png")
+	// imageData, err := ioutil.ReadFile("/tmp/accesskeyage.png")
+	imageData, err := os.ReadFile("/tmp/accesskeyage.png")
 	if err != nil {
 		m.moduleDebugChan <- DebugMsg{fmt.Sprintf("Error reading screenshot file: %s", err.Error())}
 		time.Sleep(3 * time.Second)
