@@ -2,9 +2,13 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +19,19 @@ import (
 	"github.com/strykethru/pwndoctor/pkg/pwndoctor"
 	"github.com/strykethru/pwndoctor/pkg/util"
 )
+
+type APIScreenshotUpload struct {
+	Value   string `json:"value"`
+	Name    string `json:"name"`
+	AuditID string `json:"auditID"`
+}
+
+type APIScreenshotUploadResponse struct {
+	Status string `json:"status"`
+	Datas  struct {
+		ID string `json:"_id"`
+	} `json:"datas"`
+}
 
 func PwndocUploader(m *model) tea.Cmd {
 	return func() tea.Msg {
@@ -36,7 +53,10 @@ func PwndocUploader(m *model) tea.Cmd {
 				// Upload the attack narrative to the server
 				for _, module := range m.PwndocModules {
 					if module.Selected && module.AffectedAssets != nil && len(module.AffectedAssets) > 0 {
-						go uploadAttackNarrative(*pwndocApi, m, audit, module)
+						screenshotString := takeUploadScreenshot(*pwndocApi, m, audit, module)
+						m.moduleDebugChan <- DebugMsg{"Screenshot uploaded: " + screenshotString}
+						time.Sleep(5 * time.Second)
+						go uploadAttackNarrative(*pwndocApi, m, audit, module, screenshotString)
 						go createNewFinding(*pwndocApi, m, audit, module)
 
 					}
@@ -75,7 +95,7 @@ func PwndocUploader(m *model) tea.Cmd {
 
 }
 
-func uploadAttackNarrative(pwndocApi pwndoc.API, m *model, audit pwndoc.APIAudit, currentModule Module) {
+func uploadAttackNarrative(pwndocApi pwndoc.API, m *model, audit pwndoc.APIAudit, currentModule Module, screenshotString string) {
 	// Upload the attack narrative to the server
 	m.moduleDebugChan <- DebugMsg{"Uploading attack narrative to  " + audit.Name}
 
@@ -107,6 +127,9 @@ func uploadAttackNarrative(pwndocApi pwndoc.API, m *model, audit pwndoc.APIAudit
 					searchString := currentModule.AffectedAmountSearchString
 					assetString := currentModule.AffectedAssetsSearchString
 
+					// add this to the module def
+					screenshotSearchString := "%KEYS_AGE_SCREENSHOT%"
+					replacementScreenshot := ("</p><img class=\"custom-image\" src=\"" + screenshotString + "\" alt=\"" + currentModule.Name + "\"><p>")
 					replacementAssets := ""
 					for _, asset := range currentModule.AffectedAssets {
 						replacementAssets += ("<li><p>" + asset.Name + ": " + asset.ID + "</p></li>\n")
@@ -116,10 +139,12 @@ func uploadAttackNarrative(pwndocApi pwndoc.API, m *model, audit pwndoc.APIAudit
 
 					updatedText := strings.ReplaceAll(text, searchString, replacement)
 					updatedAssets := strings.ReplaceAll(updatedText, assetString, replacementAssets)
+					updatedScreenshot := strings.ReplaceAll(updatedAssets, screenshotSearchString, replacementScreenshot)
 
 					// Assign the updated text back to the field
-					section.CustomFields[i].Text = updatedText
-					section.CustomFields[i].Text = updatedAssets
+
+					// section.CustomFields[i].Text = updatedAssets
+					section.CustomFields[i].Text = updatedScreenshot
 
 					// Update the audit with the new field
 					url := fmt.Sprintf("/api/audits/%s/sections/%s", audit.ID, section.ID)
@@ -257,6 +282,71 @@ func createNewFinding(pwndocApi pwndoc.API, m *model, audit pwndoc.APIAudit, cur
 			}
 		}
 	}
+
+}
+
+func takeUploadScreenshot(pwndocApi pwndoc.API, m *model, audit pwndoc.APIAudit, currentModule Module) string {
+
+	//replace this with a configvar
+	//wait until the file exists
+	// time.Sleep(1 * time.Second)
+	cmd := exec.Command("freeze", "/tmp/accesskeyage.csv", "-o", "/tmp/accesskeyage.png", "--window", "--language", "json", "--border.radius", "8") //"--shadow.blur", "20", "--shadow.x", "10", "--shadow.y", "10")
+
+	// Capture the output of the command
+	output, err := cmd.Output()
+	if err != nil {
+		m.moduleDebugChan <- DebugMsg{fmt.Sprintf("Error executing command: %s", err.Error())}
+		time.Sleep(1 * time.Second) // Sleep for 5 seconds before returning
+		m.moduleDebugChan <- DebugMsg{fmt.Sprintf("freeze command output: %s", output)}
+		time.Sleep(1 * time.Second)
+		return ""
+	}
+	m.moduleDebugChan <- DebugMsg{fmt.Sprintf("freeze command output: %s", output)}
+	//time.Sleep(5 * time.Second)
+
+	if currentModule.Name == "Access Key Age/Last Used" {
+		m.moduleDebugChan <- DebugMsg{"Found Access Key Age/Last Used"}
+	}
+	imageData, err := ioutil.ReadFile("/tmp/accesskeyage.png")
+	if err != nil {
+		m.moduleDebugChan <- DebugMsg{fmt.Sprintf("Error reading screenshot file: %s", err.Error())}
+		time.Sleep(3 * time.Second)
+		return ""
+	}
+
+	base64Image := base64.StdEncoding.EncodeToString(imageData)
+	//marshal the screenshot, json shoud be in the form of {"value": "data:image/png;base64,base64string", name: "accesskeyage.png", auditID: audit.ID}
+	screenshot := APIScreenshotUpload{
+		Value:   "data:image/png;base64," + base64Image,
+		Name:    "accesskeyage.png",
+		AuditID: audit.ID,
+	}
+	bodyReader, err := util.MarshalStuff(screenshot)
+	if err != nil {
+		m.moduleDebugChan <- DebugMsg{fmt.Sprintf("error marshaling screenshot: %s", err.Error())}
+		time.Sleep(3 * time.Second)
+
+	}
+	body, err := pwndocApi.PostResponseBody("/api/images", bodyReader)
+	if err != nil {
+		m.moduleDebugChan <- DebugMsg{fmt.Sprintf("error uploading: %s", err.Error())}
+
+	}
+	f, err := os.Create("response3.txt")
+	if err != nil {
+		m.moduleDebugChan <- DebugMsg{fmt.Sprintf("Error creating file: %s", err.Error())}
+		time.Sleep(3 * time.Second)
+	}
+	defer f.Close()
+	_, err = f.Write(body)
+	if err != nil {
+		m.moduleDebugChan <- DebugMsg{fmt.Sprintf("Error writing to file: %s", err.Error())}
+		time.Sleep(3 * time.Second)
+	}
+
+	var uploadResponse APIScreenshotUploadResponse
+	err = json.Unmarshal(body, &uploadResponse)
+	return uploadResponse.Datas.ID
 
 }
 

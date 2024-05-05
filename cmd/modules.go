@@ -138,6 +138,19 @@ func AccesKeyScoutQuery(m *model, currentMod string, reportFiles []string, numRe
 			// Query the json data for the specific assets
 			accessKeyID := jqAssets(m, jsonData, currentMod, affectedKeyIDpath)
 			accessKeyUserName := jqAssets(m, jsonData, currentMod, affectedKeyUserNamepath)
+			accessKeyCreationDate := jqAssets(m, jsonData, currentMod, ".services"+transformPath(id)+".CreateDate")
+
+			//log these to a file for later screenshotting
+			f, err := os.OpenFile("/tmp/accesskeyage.csv", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			if err != nil {
+				m.moduleDebugChan <- DebugMsg{Message: "Error opening file: " + err.Error()}
+			}
+			defer f.Close()
+
+			if _, err := f.Write([]byte(fmt.Sprintf("Access Key ID: \"%s\", User: \"%s\", Creation Date: \"%s\"\n", accessKeyID, accessKeyUserName, accessKeyCreationDate))); err != nil {
+				m.moduleDebugChan <- DebugMsg{Message: "Error writing to file: " + err.Error()}
+				//time.Sleep(2 * time.Second)
+			}
 
 			//add the info to the slices
 			affectedAssetsKeyIDs = append(affectedAssetsKeyIDs, accessKeyID)
@@ -163,7 +176,7 @@ func AccesKeyScoutQuery(m *model, currentMod string, reportFiles []string, numRe
 		currentReportNum++
 	}
 
-	m.moduleDoneChan <- ModuleCompleteMsg{ModuleName: currentMod}
+	m.moduleDoneChan <- ModuleCompleteMsg{ModuleName: currentMod} // should add a wait for this msg before launching upload? it might exist already
 	return nil
 }
 
