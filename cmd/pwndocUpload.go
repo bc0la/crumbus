@@ -346,6 +346,10 @@ func takeUploadScreenshot(pwndocApi pwndoc.API, m *model, audit pwndoc.APIAudit,
 
 	var uploadResponse APIScreenshotUploadResponse
 	err = json.Unmarshal(body, &uploadResponse)
+	if err != nil {
+		m.moduleDebugChan <- DebugMsg{fmt.Sprintf("Error unmarshaling json: %s", err.Error())}
+		time.Sleep(3 * time.Second)
+	}
 	return uploadResponse.Datas.ID
 
 }
